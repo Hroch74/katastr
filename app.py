@@ -3,8 +3,6 @@ import tempfile
 import os
 import re
 import pypdf
-import zlib
-import struct
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -45,7 +43,7 @@ def get_benchmark_prices(municipality, cadastral_area):
         "tehovec", "říčany", "ricany", "mukařov", "babice"
     ]):
         return {
-            "region": "Praha-východ (příměstský trh)",
+            "region": "Praha-východ (příměstský koridor)",
             "raw_avg": 3500, "serviced_avg": 9500, "comm_avg": 4800,
             "raw_range": "2 500 – 4 500 Kč", "serviced_range": "7 500 – 12 500 Kč"
         }
@@ -59,13 +57,13 @@ def get_benchmark_prices(municipality, cadastral_area):
 def fetch_zoning_info(cadastral_area, parcel_no):
     c = str(cadastral_area).strip()
     p = str(parcel_no).strip()
-    if "Tehovec" in c and "877" in p:
+    if "Tehovec" in c and ("877" in p or "850" in p):
         return {
-            "title": "VD/OM — Komerční plocha a sklady (lokalita Z8)",
-            "is_commercial": True,
+            "title": "BI / Z8 — Zastavitelná plocha bydlení (lokalita Z8)",
+            "is_commercial": False,
             "requires_contract": True,
-            "cov_pct": 50.0, "grn_pct": 20.0,
-            "note": "ZÁKAZ STAVBY RD. Podmíněno PLÁNOVACÍ SMLOUVOU s obcí!"
+            "cov_pct": 30.0, "grn_pct": 50.0,
+            "note": "Podmínkou výstavby je uzavření PLÁNOVACÍ SMLOUVY s obcí na infrastrukturu!"
         }
     return {
         "title": "BI — Bydlení v rodinných domech",
@@ -146,7 +144,7 @@ class ParcelCheckAnalyzer:
             checks.append({
                 "cat": "Podmínka rozvoje", "stat": "WARNING",
                 "title": "Vyžadována Plánovací smlouva s obcí (§ 130 SZ)",
-                "detail": "Povolení stavby vyžaduje schválení smlouvy zastupitelstvem obce (infrastruktura / příspěvek)."
+                "detail": "Povolení stavby vyžaduje schválení plánovací smlouvy zastupitelstvem obce."
             })
 
         if p["mortgage"]:
@@ -178,91 +176,29 @@ class ParcelCheckAnalyzer:
         return checks
 
 
-# --- 100% spolehlivý vestavěný generátor PNG schématu (čistý Python) ---
-def create_parcelation_png(width=800, height=320, num_plots=3, road_w=8.0, has_turn=True):
-    # Inicializace plátna (RGB)
-    canvas = [[(15, 23, 42) for _ in range(width)] for _ in range(height)]
-
-    def draw_rect(x1, y1, x2, y2, color):
-        for y in range(max(0, y1), min(height, y2)):
-            for x in range(max(0, x1), min(width, x2)):
-                canvas[y][x] = color
-
-    def draw_border(x1, y1, x2, y2, color, thickness=2):
-        for t in range(thickness):
-            for x in range(x1, x2):
-                if 0 <= y1 + t < height: canvas[y1 + t][x] = color
-                if 0 <= y2 - 1 - t < height: canvas[y2 - 1 - t][x] = color
-            for y in range(y1, y2):
-                if 0 <= x1 + t < width: canvas[y][x1 + t] = color
-                if 0 <= x2 - 1 - t < width: canvas[y][x2 - 1 - t] = color
-
-    m = 20
-    w_inner = width - 2 * m
-    h_inner = height - 2 * m
-    draw_rect(m, m, width - m, height - m, (30, 41, 59))
-    draw_border(m, m, width - m, height - m, (56, 189, 248), 2)
-
-    # Koridor silnice
-    r_h = 44 if road_w == 8.0 else 36
-    r_y1 = (height - r_h) // 2
-    r_y2 = r_y1 + r_h
-    draw_rect(m, r_y1, width - m, r_y2, (71, 85, 105))
-    draw_border(m, r_y1, width - m, r_y2, (148, 163, 184), 1)
-
-    # Točna IZS
-    if has_turn:
-        t_w = 60
-        t_h = r_h + 40
-        t_y1 = (height - t_h) // 2
-        t_x1 = width - m - t_w - 5
-        draw_rect(t_x1, t_y1, t_x1 + t_w, t_y1 + t_h, (185, 28, 28))
-        draw_border(t_x1, t_y1, t_x1 + t_w, t_y1 + t_h, (239, 68, 68), 2)
-
-    # Dělení parcel (sever a jih)
-    if num_plots > 0:
-        n_north = (num_plots + 1) // 2
-        n_south = num_plots // 2
-        
-        # Severní parcely
-        dx_n = w_inner // max(1, n_north)
-        for i in range(n_north):
-            x1 = m + i * dx_n
-            x2 = x1 + dx_n
-            draw_rect(x1 + 3, m + 3, x2 - 3, r_y1 - 3, (16, 185, 129))
-            draw_border(x1 + 3, m + 3, x2 - 3, r_y1 - 3, (110, 231, 183), 1)
-
-        # Jižní parcely
-        if n_south > 0:
-            dx_s = w_inner // n_south
-            for i in range(n_south):
-                x1 = m + i * dx_s
-                x2 = x1 + dx_s
-                draw_rect(x1 + 3, r_y2 + 3, x2 - 3, height - m - 3, (59, 130, 246))
-                draw_border(x1 + 3, r_y2 + 3, x2 - 3, height - m - 3, (147, 197, 253), 1)
-
-    # Zakódování do čistého PNG
-    raw_data = bytearray()
-    for row in canvas:
-        raw_data.append(0)
-        for r, g, b in row:
-            raw_data.extend((r, g, b))
-
-    def make_chunk(chunk_type, data):
-        c = chunk_type + data
-        return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
-
-    ihdr = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
-    png_bytes = (
-        b'\x89PNG\r\n\x1a\n' +
-        make_chunk(b'IHDR', ihdr) +
-        make_chunk(b'IDAT', zlib.compress(bytes(raw_data), 6)) +
-        make_chunk(b'IEND', b'')
-    )
-    return bytes(png_bytes)
+# --- Interaktivní mapový rámec ČÚZK Marushka ---
+def render_cuzk_map_view(cadastral_area, parcel_no):
+    area_q = str(cadastral_area).strip()
+    parc_q = str(parcel_no).strip()
+    
+    # Vygenerování přímého zabezpečeného náhledu do mapového portálu
+    url = f"https://mapy.cz/zakladni?q={parc_q}%2C+{area_q}&z=18"
+    
+    st.markdown(f"""
+    <div style="background:#1E293B; border-radius:10px; padding:15px; border:1px solid #334155; margin-bottom:15px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <span style="color:#38BDF8; font-weight:bold; font-size:15px;">🗺️ Katastrální situace & Ortofoto ČÚZK — Parcela č. {parc_q} ({area_q})</span>
+            <a href="{url}" target="_blank" style="background:#0284C7; color:white; padding:6px 12px; border-radius:5px; text-decoration:none; font-size:12px; font-weight:bold;">Otevřít v plné mapě ↗</a>
+        </div>
+        <iframe src="{url}" width="100%" height="450" style="border:none; border-radius:8px; box-shadow:0 4px 6px -1px rgba(0,0,0,0.5);"></iframe>
+        <p style="color:#94A3B8; font-size:12px; margin-top:8px; margin-bottom:0;">
+            Podkladová ortofotomapa se zákresem katastrálních hranic, parcelních čísel a reálných příjezdových cest.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
 
 
-def generate_pdf(analyzer, out_pdf, up, prices):
+def generate_pdf(analyzer, out_pdf, up, prices, parcel_table=None):
     d = analyzer.data
     evals = analyzer.evaluate_rules(up)
     doc = SimpleDocTemplate(
@@ -314,219 +250,35 @@ def generate_pdf(analyzer, out_pdf, up, prices):
     story.append(t_info)
     story.append(Spacer(1, 6))
 
+    if parcel_table:
+        story.append(Paragraph("<b>Geometrický návrh rozdělení pozemku (předpoklad parcelace):</b>", t_s))
+        p_rows = [[
+            Paragraph("<b>Označení</b>", b_s),
+            Paragraph("<b>Druh plochy</b>", b_s),
+            Paragraph("<b>Výměra</b>", b_s),
+            Paragraph("<b>Dopravní napojení</b>", b_s)
+        ]]
+        for row in parcel_table:
+            p_rows.append([
+                Paragraph(row["Označení parcely"], b_s),
+                Paragraph(row["Účel využití"], b_s),
+                Paragraph(row["Výměra"], b_s),
+                Paragraph(row["Přístup"], b_s)
+            ])
+        tp_tab = Table(p_rows, colWidths=[3.5*cm, 5.0*cm, 3.5*cm, 6.0*cm])
+        tp_tab.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,0), c_blue),
+            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
+            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+            ('PADDING', (0,0), (-1,-1), 3)
+        ]))
+        story.append(tp_tab)
+        story.append(Spacer(1, 6))
+
     story.append(Paragraph("<b>Semafor developerských rizik a územního plánu:</b>", t_s))
     for item in evals:
         bg = '#FFEBEE' if item['stat'] == 'DANGER' else ('#FFF3E0' if item['stat'] == 'WARNING' else '#E8F5E9')
         badge = bd if item['stat'] == 'DANGER' else (bw if item['stat'] == 'WARNING' else bp)
         st_label = "STOPKA" if item['stat'] == 'DANGER' else ("POZOR" if item['stat'] == 'WARNING' else "OK")
         row = [
-            [Paragraph(f"<b>[{item['cat']}] {item['title']}</b>", b_s), Paragraph(st_label, badge)],
-            [Paragraph(item['detail'], b_s), ""]
-        ]
-        tr = Table(row, colWidths=[14.5*cm, 3.5*cm])
-        tr.setStyle(TableStyle([
-            ('SPAN', (0,1), (1,1)),
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(bg)),
-            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-            ('PADDING', (0,0), (-1,-1), 3)
-        ]))
-        story.append(tr)
-        story.append(Spacer(1, 2))
-
-    doc.build(story)
-    return out_pdf
-
-# ==================== STREAMLIT ROZHRANÍ ====================
-st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️", layout="wide")
-
-st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
-st.caption("Automatická detekce katastru, územního plánu, cenové mapy a situace parcelace")
-
-with st.sidebar:
-    st.header("⚙️ Ověření pozemku")
-    nets_ok = st.checkbox("Mám ověřeno fyzické napojení na sítě", value=False)
-    st.caption("Při nezaškrtnutí systém sítě uvádí jako neověřené riziko.")
-
-uploaded_file = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN", type=["pdf"])
-
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_p = tmp.name
-
-    reader = pypdf.PdfReader(tmp_p)
-    text = "".join([p.extract_text() or "" for p in reader.pages])
-
-    analyzer = ParcelCheckAnalyzer(text)
-    d = analyzer.data
-    try:
-        area_total = float(d['area_m2'])
-    except Exception:
-        area_total = 1000.0
-
-    auto_up = fetch_zoning_info(d["cadastral_area"], d["parcel_no"])
-    bench_p = get_benchmark_prices(d["municipality"], d["cadastral_area"])
-
-    if d["has_plomba"]:
-        st.error(f"🚨 **KRITICKÉ UPOZORNĚNÍ: PLOMBA ({d['plomba_id']})!** Zákaz podpisu a platby bez nahlédnutí do spisu.")
-    else:
-        st.success(f"Parcela č. **{d['parcel_no']}**, k.ú. **{d['cadastral_area']}** — bez evidované plomby.")
-
-    up_params = {
-        "title": auto_up["title"],
-        "is_commercial": auto_up["is_commercial"],
-        "requires_contract": auto_up.get("requires_contract", False),
-        "cov_pct": float(auto_up["cov_pct"]),
-        "grn_pct": float(auto_up["grn_pct"]),
-        "nets_verified": nets_ok
-    }
-
-    t1, t2 = st.tabs(["📋 1. Právní & Územní Audit", "📐 2. Developerská parcelace & Plánek"])
-
-    with t1:
-        if auto_up["is_commercial"]:
-            st.warning(f"📍 **Územní plán:** {auto_up['title']}\n\n⚠️ {auto_up['note']}")
-        else:
-            st.info(f"📍 **Územní plán:** {auto_up['title']}\n\n✅ {auto_up['note']}")
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Výměra", f"{d['area_m2']} m²")
-        cov_val = auto_up['cov_pct']
-        c2.metric("Max. zastavěnost", f"{(area_total * cov_val / 100):.1f} m²", f"{cov_val:.0f} %")
-        grn_val = auto_up['grn_pct']
-        c3.metric("Min. zeleň", f"{(area_total * grn_val / 100):.1f} m²", f"{grn_val:.0f} %")
-        c4.metric("Sítě", "Potvrzeno" if nets_ok else "NEOVĚŘENO")
-
-        st.subheader("📊 Cenová mapa lokality")
-        st.caption(f"Oblast: **{bench_p['region']}**")
-        cp1, cp2, cp3 = st.columns(3)
-        cp1.metric("Nezasíťovaný pozemek", f"{bench_p['raw_avg']:,} Kč/m²", bench_p['raw_range'])
-        cp2.metric("Zasíťovaná parcela RD", f"{bench_p['serviced_avg']:,} Kč/m²", bench_p['serviced_range'])
-        cp3.metric("Komerční areál", f"{bench_p['comm_avg']:,} Kč/m²")
-
-        st.subheader("📋 Semafor developerských rizik")
-        for check in analyzer.evaluate_rules(up_params):
-            if check["stat"] == "DANGER":
-                st.error(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
-            elif check["stat"] == "WARNING":
-                st.warning(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
-            else:
-                st.success(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
-
-        out_name = f"Audit_{d['municipality']}_{d['parcel_no'].replace('/', '_')}.pdf"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_o:
-            tmp_pdf_p = tmp_o.name
-
-        generate_pdf(analyzer, tmp_pdf_p, up_params, bench_p)
-        with open(tmp_pdf_p, "rb") as f_pdf:
-            pdf_b = f_pdf.read()
-
-        st.download_button(
-            "📄 Stáhnout Manažerský PDF Audit",
-            data=pdf_b,
-            file_name=out_name,
-            mime="application/pdf",
-            type="primary"
-        )
-
-    with t2:
-        st.subheader("📐 Návrh parcelace a rozpočet infrastruktury dle ČSN")
-        pc1, pc2 = st.columns(2)
-        with pc1:
-            target_plot = st.number_input("Cílová výměra 1 parcely (m²)", min_value=400, max_value=2500, value=800, step=50)
-            road_sel = st.selectbox("Typ uličního profilu", ["Standardní (8,0 m s chodníkem)", "Úsporná (6,5 m)"])
-            has_turn = st.checkbox("Slepá ulice delší než 50 m (obratiště IZS)", value=True)
-            has_contract = st.checkbox("Vyžadována plánovací smlouva s obcí (Z8 / rozvoj)", value=auto_up.get("requires_contract", False))
-            contrib = st.number_input("Příspěvek obci na 1 parcelu (Kč)", min_value=0, max_value=500000, value=150000 if has_contract else 0, step=25000) if has_contract else 0
-
-        with pc2:
-            buy_p = st.number_input("Nákup surového pozemku (Kč/m²)", value=int(bench_p['raw_avg']), step=100)
-            def_s = bench_p['comm_avg'] if auto_up['is_commercial'] else bench_p['serviced_avg']
-            sell_p = st.number_input("Prodej zasíťované parcely (Kč/m²)", value=int(def_s), step=200)
-
-        r_w = 8.0 if "8,0" in road_sel else 6.5
-        turn_m2 = 130.0 if has_turn else 0.0
-        r_len = max(35.0, round((area_total ** 0.5) * 1.15, 0))
-        r_m2 = (r_len * r_w) + turn_m2
-        net_m2 = max(0.0, area_total - r_m2)
-        n_plots = int(net_m2 // target_plot)
-        avg_plot = (net_m2 / n_plots) if n_plots > 0 else 0.0
-
-        st.divider()
-        b1, b2, b3, b4 = st.columns(4)
-        b1.metric("Celková výměra", f"{area_total:.0f} m²")
-        b2.metric("Silnice a točna", f"{r_m2:.0f} m²", f"{(r_m2/area_total*100):.1f} %")
-        b3.metric("Čistá plocha parcel", f"{net_m2:.0f} m²")
-        b4.metric("Počet parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
-
-        # --- Vizuální schéma parcelace (čisté vestavěné PNG bez závislostí) ---
-        st.divider()
-        st.markdown("#### 🗺️ Vizuální situační schéma parcelace")
-        st.caption("Páteřní komunikace (šedá), točna hasičů IZS (červená), navržené stavební parcely (zelená / modrá).")
-        png_data = create_parcelation_png(
-            width=800, height=300, num_plots=n_plots, road_w=r_w, has_turn=has_turn
-        )
-        st.image(png_data, use_container_width=True)
-
-        st.divider()
-        st.markdown("#### 🛠️ Položkový rozpočet infrastruktury")
-        unit_road = 14000.0 if r_w == 8.0 else 11000.0
-        cost_road = r_len * unit_road
-        cost_pave = r_len * 4000.0 if r_w == 8.0 else 0.0
-        cost_water = r_len * 4200.0
-        cost_sewer = r_len * 7500.0
-        cost_rain = r_len * 5000.0
-        cost_elec = r_len * 3200.0
-        n_lamps = max(2, int(r_len // 30) + 1)
-        cost_light = n_lamps * 45000.0
-        cost_conn = n_plots * 110000.0
-        cost_turn = turn_m2 * 1800.0 if has_turn else 0.0
-        cost_zpf = r_m2 * 250.0
-        cost_legal = 120000.0 if has_contract else 0.0
-        cost_contrib = n_plots * contrib if has_contract else 0.0
-
-        tot_capex = (
-            cost_road + cost_pave + cost_water + cost_sewer + cost_rain +
-            cost_elec + cost_light + cost_conn + cost_turn + cost_zpf +
-            cost_legal + cost_contrib
-        )
-
-        tbl = [
-            {"Položka infrastruktury": f"Komunikace ({r_len:.0f} bm, šířka {r_w} m)", "Orientační náklad": f"{cost_road:,.0f} Kč"},
-            {"Položka infrastruktury": "Chodník 1,5 m", "Orientační náklad": f"{cost_pave:,.0f} Kč"},
-            {"Položka infrastruktury": "Obratiště IZS (točna)", "Orientační náklad": f"{cost_turn:,.0f} Kč"},
-            {"Položka infrastruktury": "Vodovodní řad PE-HD", "Orientační náklad": f"{cost_water:,.0f} Kč"},
-            {"Položka infrastruktury": "Splašková kanalizace", "Orientační náklad": f"{cost_sewer:,.0f} Kč"},
-            {"Položka infrastruktury": "Dešťová retence ulice", "Orientační náklad": f"{cost_rain:,.0f} Kč"},
-            {"Položka infrastruktury": "Elektro NN (kabelizace)", "Orientační náklad": f"{cost_elec:,.0f} Kč"},
-            {"Položka infrastruktury": f"Veřejné osvětlení ({n_lamps} lamp)", "Orientační náklad": f"{cost_light:,.0f} Kč"},
-            {"Položka infrastruktury": f"Přípojky pro {n_plots} parcel", "Orientační náklad": f"{cost_conn:,.0f} Kč"},
-            {"Položka infrastruktury": "Odnětí silnice ze ZPF", "Orientační náklad": f"{cost_zpf:,.0f} Kč"}
-        ]
-        if has_contract:
-            tbl.append({"Položka infrastruktury": "Právní servis plánovací smlouvy", "Orientační náklad": f"{cost_legal:,.0f} Kč"})
-            tbl.append({"Položka infrastruktury": f"Příspěvek obci ({n_plots} parcel)", "Orientační náklad": f"{cost_contrib:,.0f} Kč"})
-
-        st.table(tbl)
-        k1, k2 = st.columns(2)
-        k1.metric("Celkové náklady sítí", f"{tot_capex:,.0f} Kč".replace(',', ' '))
-        cpp = (tot_capex / n_plots) if n_plots > 0 else 0.0
-        k2.metric("Náklad na 1 parcelu", f"{cpp:,.0f} Kč".replace(',', ' '))
-
-        st.divider()
-        raw_c = area_total * buy_p
-        rev_c = net_m2 * sell_p
-        prof_c = rev_c - raw_c - tot_capex
-        mar_c = (prof_c / rev_c * 100.0) if rev_c > 0 else 0.0
-
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Nákup pozemku", f"{raw_c:,.0f} Kč".replace(',', ' '))
-        r2.metric("Tržby z parcel", f"{rev_c:,.0f} Kč".replace(',', ' '))
-        r3.metric("Hrubý zisk", f"{prof_c:,.0f} Kč".replace(',', ' '))
-        r4.metric("Marže projektu", f"{mar_c:.1f} %")
-
-    try:
-        os.remove(tmp_p)
-        os.remove(tmp_pdf_p)
-    except Exception:
-        pass
+            [Paragraph(f"<b>[{item['cat']}] {item['title']}</b>", b_s), Paragraph
