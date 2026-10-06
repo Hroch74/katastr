@@ -135,13 +135,7 @@ class ParcelCheckAnalyzer:
         return checks
 
 def render_professional_cuzk_map(cadastral_area, parcel_no):
-    # Přesné souřadnice pro parcelu 850/1 v k.ú. Tehovec (u zástavby Na Hůrkách)
-    if "Tehovec" in str(cadastral_area):
-        lat = 49.9840
-        lon = 14.7350
-    else:
-        lat = 49.9840
-        lon = 14.7350
+    search_query = f"{parcel_no}, {cadastral_area}, Česká republika"
 
     html = f"""
     <!DOCTYPE html>
@@ -167,11 +161,11 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
     <body>
         <div id="map"></div>
         <div class="info-box">
-            <b>📍 Parcela č. {parcel_no} — k.ú. {cadastral_area}</b><br>
-            🛠️ <b>Vlevo nahoře:</b> Použijte <b>ikonu čáry</b> pro nakreslení dělící linie nebo <b>polygon</b> pro zaměření parcely.
+            <b>📍 Parcela č. {parcel_no} — {cadastral_area}</b><br>
+            🛠️ <b>Vlevo nahoře:</b> Použijte <b>čáru</b> pro dělící linii nebo <b>polygon</b> pro zaměření nové parcely.
         </div>
         <script>
-            var map = L.map('map').setView([{lat}, {lon}], 18);
+            var map = L.map('map').setView([49.8175, 15.4730], 7);
 
             var orto = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
                 maxZoom: 20, attribution: 'Letecký snímek'
@@ -184,9 +178,6 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
             var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
                 maxZoom: 19, attribution: 'OpenStreetMap'
             }});
-
-            var marker = L.marker([{lat}, {lon}]).addTo(map)
-                .bindPopup("<b>Hledaná parcela: {parcel_no}</b><br>k.ú. {cadastral_area}").openPopup();
 
             var drawnItems = new L.FeatureGroup();
             map.addLayer(drawnItems);
@@ -209,6 +200,29 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
             var baseMaps = {{ "Letecký snímek (Ortofoto)": orto, "Základní mapa": osm }};
             var overlayMaps = {{ "Katastrální hranice ČÚZK": cuzkKN, "Návrh dělení": drawnItems }};
             L.control.layers(baseMaps, overlayMaps, {{position: 'topright'}}).addTo(map);
+
+            // Automatické vyhledání a zacílení na danou obec / lokalitu v ČR
+            var query = "{search_query}";
+            fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(query))
+                .then(r => r.json())
+                .then(data => {{
+                    if (data && data.length > 0) {{
+                        var lat = parseFloat(data[0].lat);
+                        var lon = parseFloat(data[0].lon);
+                        map.setView([lat, lon], 18);
+                        L.marker([lat, lon]).addTo(map).bindPopup("<b>" + query + "</b>").openPopup();
+                    }} else {{
+                        // Záložní pokus pouze podle obce
+                        var fallbackQuery = "{cadastral_area}, Česká republika";
+                        fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(fallbackQuery))
+                            .then(r => r.json())
+                            .then(d2 => {{
+                                if (d2 && d2.length > 0) {{
+                                    map.setView([parseFloat(d2[0].lat), parseFloat(d2[0].lon)], 16);
+                                }}
+                            }});
+                    }}
+                }});
         </script>
     </body>
     </html>
@@ -285,27 +299,29 @@ with st.sidebar:
     nets_ok = st.checkbox("Mám ověřeno fyzické napojení na sítě", value=False)
     st.caption("Při nezaškrtnutí systém sítě uvádí jako neověřené riziko.")
 
-# Volba způsobu zadání: Ručně vs. PDF
-input_mode = st.radio("Způsob zadání:", ["✍️ Zadat ručně (číslo parcely a obec)", "📄 Nahrát PDF z Nahlížení do KN"], horizontal=True)
+input_mode = st.radio("Způsob zadání:", ["✍️ Zadat ručně (parcela a obec)", "📄 Nahrát PDF z Nahlížení do KN"], horizontal=True)
 
 analyzer = None
 
-if input_mode == "✍️ Zadat ručně (číslo parcely a obec)":
+if input_mode == "✍️ Zadat ručně (parcela a obec)":
     c_m1, c_m2, c_m3 = st.columns(3)
-    r_parc = c_m1.text_input("Parcelní číslo", value="850/1")
-    r_ku = c_m2.text_input("Katastrální území / Obec", value="Tehovec")
-    r_area = c_m3.number_input("Výměra pozemku (m²)", min_value=100, max_value=500000, value=3860, step=50)
+    r_parc = c_m1.text_input("Parcelní číslo", placeholder="např. 850/1")
+    r_ku = c_m2.text_input("Obec / Katastrální území", placeholder="např. Tehovec")
+    r_area = c_m3.number_input("Výměra pozemku (m²)", min_value=0, max_value=1000000, value=0, step=50)
 
-    mock_text = f"""
-    Parcelní číslo: {r_parc}
-    Obec: {r_ku} [538809]
-    Katastrální území: {r_ku} [765317]
-    Číslo LV: 1042
-    Výměra [m2]: {r_area}
-    Druh pozemku: orná půda
-    Nejsou evidována žádná omezení
-    """
-    analyzer = ParcelCheckAnalyzer(mock_text)
+    if r_parc and r_ku and r_area > 0:
+        mock_text = f"""
+        Parcelní číslo: {r_parc}
+        Obec: {r_ku}
+        Katastrální území: {r_ku}
+        Číslo LV: -
+        Výměra [m2]: {r_area}
+        Druh pozemku: pozemek
+        Nejsou evidována žádná omezení
+        """
+        analyzer = ParcelCheckAnalyzer(mock_text)
+    else:
+        st.info("💡 Zadejte parcelní číslo, obec a výměru pro zahájení auditu.")
 
 else:
     uploaded_file = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN", type=["pdf"])
@@ -404,7 +420,7 @@ if analyzer is not None:
         r_len = max(35.0, round((area_total ** 0.5) * 1.15, 0))
         r_m2 = (r_len * r_w) + turn_m2
         net_m2 = max(0.0, area_total - r_m2)
-        n_plots = int(net_m2 // target_plot)
+        n_plots = int(net_m2 // target_plot) if target_plot > 0 else 0
         avg_plot = (net_m2 / n_plots) if n_plots > 0 else 0.0
 
         st.divider()
@@ -417,7 +433,7 @@ if analyzer is not None:
         st.divider()
         st.markdown("#### 📐 Geometrický rozpad parcelace (Návrh geometrického plánu)")
         
-        p_base = d["parcel_no"].split("/")[0]
+        p_base = d["parcel_no"].split("/")[0] if d["parcel_no"] else "P"
         parcel_rows = [
             {"Označení": f"parc. č. {p_base}/A", "Využití": "Komunikace a točna IZS", "Výměra": f"{r_m2:.0f} m²", "Přístup": "Napojení na obecní komunikaci"}
         ]
