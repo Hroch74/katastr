@@ -7,14 +7,7 @@ import pypdf
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    HRFlowable
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
@@ -117,72 +110,27 @@ class ParcelCheckAnalyzer:
         checks = []
 
         if p["has_plomba"]:
-            checks.append({
-                "cat": "PLOMBA (STOPKA)",
-                "stat": "DANGER",
-                "title": f"Plomba: {p['plomba_id']}",
-                "detail": "Běží vklad na KN. ZÁKAZ PLATBY!"
-            })
+            checks.append({"cat": "PLOMBA (STOPKA)", "stat": "DANGER", "title": f"Plomba: {p['plomba_id']}", "detail": "Běží vklad na KN. ZÁKAZ PLATBY!"})
         else:
-            checks.append({
-                "cat": "Řízení na KN",
-                "stat": "PASS",
-                "title": "Bez plomby",
-                "detail": "K nemovitosti neběží žádné řízení."
-            })
+            checks.append({"cat": "Řízení na KN", "stat": "PASS", "title": "Bez plomby", "detail": "K nemovitosti neběží žádné řízení."})
 
         if up["is_commercial"]:
-            checks.append({
-                "cat": "Územní plán",
-                "stat": "WARNING",
-                "title": f"Komerční zóna: {up['title']}",
-                "detail": f"ZÁKAZ RD. Zastavěnost {cov:.0f} % = {max_foot:.0f} m²."
-            })
+            checks.append({"cat": "Územní plán", "stat": "WARNING", "title": f"Komerční zóna: {up['title']}", "detail": f"ZÁKAZ RD. Zastavěnost {cov:.0f} % = {max_foot:.0f} m²."})
         else:
-            checks.append({
-                "cat": "Územní plán",
-                "stat": "PASS",
-                "title": f"Obytná zóna: {up['title']}",
-                "detail": f"Přípustný RD. Zastavěnost {cov:.0f} % = {max_foot:.0f} m²."
-            })
+            checks.append({"cat": "Územní plán", "stat": "PASS", "title": f"Obytná zóna: {up['title']}", "detail": f"Přípustný RD. Zastavěnost {cov:.0f} % = {max_foot:.0f} m²."})
 
         if up.get("requires_contract", False):
-            checks.append({
-                "cat": "Podmínka rozvoje",
-                "stat": "WARNING",
-                "title": "Vyžadována Plánovací smlouva s obcí",
-                "detail": "Povolení stavby vyžaduje schválení smlouvy obcí."
-            })
+            checks.append({"cat": "Podmínka rozvoje", "stat": "WARNING", "title": "Vyžadována Plánovací smlouva s obcí", "detail": "Povolení stavby vyžaduje schválení smlouvy obcí."})
 
         if p["mortgage"]:
-            checks.append({
-                "cat": "Zástavní práva",
-                "stat": "WARNING",
-                "title": "Na pozemku vázne zástavní právo",
-                "detail": "Podmínit výplatu kvitancí a výmazem."
-            })
+            checks.append({"cat": "Zástavní práva", "stat": "WARNING", "title": "Na pozemku vázne zástavní právo", "detail": "Podmínit výplatu kvitancí a výmazem."})
         elif p["limitations"]:
-            checks.append({
-                "cat": "Právní stav",
-                "stat": "PASS",
-                "title": "V části C nejsou evidována omezení",
-                "detail": "Bez zástav a věcných břemen."
-            })
+            checks.append({"cat": "Právní stav", "stat": "PASS", "title": "V části C nejsou evidována omezení", "detail": "Bez zástav a věcných břemen."})
 
         if not up.get("nets_verified", False):
-            checks.append({
-                "cat": "Inženýrské sítě",
-                "stat": "WARNING",
-                "title": "Sítě nejsou na pozemku ověřeny",
-                "detail": "V KN sítě nejsou. Podat žádost správcům."
-            })
+            checks.append({"cat": "Inženýrské sítě", "stat": "WARNING", "title": "Sítě nejsou na pozemku ověřeny", "detail": "V KN sítě nejsou. Podat žádost správcům."})
         else:
-            checks.append({
-                "cat": "Inženýrské sítě",
-                "stat": "PASS",
-                "title": "Sítě potvrzeny v dosahu",
-                "detail": "Dle technické dokumentace záměru."
-            })
+            checks.append({"cat": "Inženýrské sítě", "stat": "PASS", "title": "Sítě potvrzeny v dosahu", "detail": "Dle technické dokumentace záměru."})
 
         return checks
 
@@ -331,7 +279,7 @@ def generate_pdf(analyzer, out_pdf, up, prices, parcel_table=None):
         story.append(Paragraph("<b>Geometrický návrh rozdělení pozemku:</b>", t_s))
         p_rows = [[Paragraph("<b>Označení</b>", b_s), Paragraph("<b>Druh plochy</b>", b_s), Paragraph("<b>Výměra</b>", b_s), Paragraph("<b>Dopravní napojení</b>", b_s)]]
         for row in parcel_table:
-            p_rows.append([Paragraph(row["Označení parcely"], b_s), Paragraph(row["Účel využití"], b_s), Paragraph(row["Výměra"], b_s), Paragraph(row["Přístup"], b_s)])
+            p_rows.append([Paragraph(row["Označení"], b_s), Paragraph(row["Využití"], b_s), Paragraph(row["Výměra"], b_s), Paragraph(row["Přístup"], b_s)])
         tp_tab = Table(p_rows, colWidths=[3.5*cm, 5.0*cm, 3.5*cm, 6.0*cm])
         tp_tab.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), c_blue), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 3)]))
         story.append(tp_tab)
@@ -401,7 +349,7 @@ if uploaded_file is not None:
 
     with t1:
         if auto_up["is_commercial"]:
-            st.warning("📍 Územní plán: " + str(auto_up['title']) + "\n\n⚠️ " + str(auto_up['note']))
+            st.warning("📍 Územní plán: " + str(auto_up['title']) + "\n\n⚠️️ " + str(auto_up['note']))
         else:
             st.info("📍 Územní plán: " + str(auto_up['title']) + "\n\n✅ " + str(auto_up['note']))
 
@@ -431,7 +379,7 @@ if uploaded_file is not None:
                 st.success(ch_msg)
 
     with t2:
-        st.subheader("🗺️️ Reálná katastrální situace & Geometrický návrh parcelace")
+        st.subheader("🗺️ Reálná katastrální situace & Geometrický návrh parcelace")
 
         map_code = render_professional_cuzk_map(d["cadastral_area"], d["parcel_no"])
         components.html(map_code, height=540)
@@ -468,8 +416,90 @@ if uploaded_file is not None:
         st.divider()
         st.markdown("#### 📐 Geometrický rozpad parcelace (Návrh geometrického plánu)")
         
-        parcel_rows = []
         p_base = d["parcel_no"].split("/")[0]
-        
-        parcel_rows.append({
-            "Označení parcely":
+        parcel_rows = [
+            {"Označení": f"parc. č. {p_base}/A", "Využití": "Komunikace a točna IZS", "Výměra": f"{r_m2:.0f} m²", "Přístup": "Napojení na obecní komunikaci"}
+        ]
+        for i in range(1, n_plots + 1):
+            parcel_rows.append({"Označení": f"parc. č. {p_base}/{i+1}", "Využití": "Stavební pozemek pro RD", "Výměra": f"{avg_plot:.0f} m²", "Přístup": f"Sjezd z parcely {p_base}/A"})
+            
+        st.table(parcel_rows)
+
+        st.divider()
+        st.markdown("#### 🛠️ Položkový rozpočet infrastruktury")
+        unit_road = 14000.0 if r_w == 8.0 else 11000.0
+        cost_road = r_len * unit_road
+        cost_pave = r_len * 4000.0 if r_w == 8.0 else 0.0
+        cost_water = r_len * 4200.0
+        cost_sewer = r_len * 7500.0
+        cost_rain = r_len * 5000.0
+        cost_elec = r_len * 3200.0
+        n_lamps = max(2, int(r_len // 30) + 1)
+        cost_light = n_lamps * 45000.0
+        cost_conn = n_plots * 110000.0
+        cost_turn = turn_m2 * 1800.0 if has_turn else 0.0
+        cost_zpf = r_m2 * 250.0
+        cost_legal = 120000.0 if has_contract else 0.0
+        cost_contrib = n_plots * contrib if has_contract else 0.0
+
+        tot_capex = (
+            cost_road + cost_pave + cost_water + cost_sewer + cost_rain +
+            cost_elec + cost_light + cost_conn + cost_turn + cost_zpf +
+            cost_legal + cost_contrib
+        )
+
+        tbl = [
+            {"Položka": f"Komunikace ({r_len:.0f} bm, {r_w} m)", "Náklad": f"{cost_road:,.0f} Kč"},
+            {"Položka": "Chodník 1,5 m", "Náklad": f"{cost_pave:,.0f} Kč"},
+            {"Položka": "Obratiště IZS (točna)", "Náklad": f"{cost_turn:,.0f} Kč"},
+            {"Položka": "Vodovodní řad PE-HD", "Náklad": f"{cost_water:,.0f} Kč"},
+            {"Položka": "Splašková kanalizace", "Náklad": f"{cost_sewer:,.0f} Kč"},
+            {"Položka": "Dešťová retence ulice", "Náklad": f"{cost_rain:,.0f} Kč"},
+            {"Položka": "Elektro NN (kabelizace)", "Náklad": f"{cost_elec:,.0f} Kč"},
+            {"Položka": f"Veřejné osvětlení ({n_lamps} lamp)", "Náklad": f"{cost_light:,.0f} Kč"},
+            {"Položka": f"Přípojky ({n_plots} parcel)", "Náklad": f"{cost_conn:,.0f} Kč"},
+            {"Položka": "Odnětí silnice ze ZPF", "Náklad": f"{cost_zpf:,.0f} Kč"}
+        ]
+        if has_contract:
+            tbl.append({"Položka": "Právní servis plánovací smlouvy", "Náklad": f"{cost_legal:,.0f} Kč"})
+            tbl.append({"Položka": f"Příspěvek obci ({n_plots} parcel)", "Náklad": f"{cost_contrib:,.0f} Kč"})
+
+        st.table(tbl)
+        k1, k2 = st.columns(2)
+        k1.metric("Celkové náklady sítí", f"{tot_capex:,.0f} Kč".replace(',', ' '))
+        cpp = (tot_capex / n_plots) if n_plots > 0 else 0.0
+        k2.metric("Náklad na 1 parcelu", f"{cpp:,.0f} Kč".replace(',', ' '))
+
+        st.divider()
+        raw_c = area_total * buy_p
+        rev_c = net_m2 * sell_p
+        prof_c = rev_c - raw_c - tot_capex
+        mar_c = (prof_c / rev_c * 100.0) if rev_c > 0 else 0.0
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Nákup pozemku", f"{raw_c:,.0f} Kč".replace(',', ' '))
+        r2.metric("Tržby z parcel", f"{rev_c:,.0f} Kč".replace(',', ' '))
+        r3.metric("Hrubý zisk", f"{prof_c:,.0f} Kč".replace(',', ' '))
+        r4.metric("Marže projektu", f"{mar_c:.1f} %")
+
+        out_name = "Audit_" + str(d['municipality']) + "_" + str(d['parcel_no'].replace('/', '_')) + ".pdf"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_o:
+            tmp_pdf_p = tmp_o.name
+
+        generate_pdf(analyzer, tmp_pdf_p, up_params, bench_p, parcel_rows)
+        with open(tmp_pdf_p, "rb") as f_pdf:
+            pdf_b = f_pdf.read()
+
+        st.download_button(
+            "📄 Stáhnout Manažerský PDF Audit",
+            data=pdf_b,
+            file_name=out_name,
+            mime="application/pdf",
+            type="primary"
+        )
+
+    try:
+        os.remove(tmp_p)
+        os.remove(tmp_pdf_p)
+    except Exception:
+        pass
