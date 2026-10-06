@@ -20,7 +20,6 @@ from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# --- Písma pro PDF s českou diakritikou ---
 def setup_czech_fonts():
     f_reg = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
     f_bld = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
@@ -36,7 +35,6 @@ def setup_czech_fonts():
 
 FONT_MAIN, FONT_BOLD = setup_czech_fonts()
 
-# --- Cenová mapa okresu ---
 def get_benchmark_prices(municipality, cadastral_area):
     m = str(municipality).lower()
     c = str(cadastral_area).lower()
@@ -58,7 +56,6 @@ def get_benchmark_prices(municipality, cadastral_area):
         "serviced_range": "3 500 - 7 000 Kč"
     }
 
-# --- Územní plán ---
 def fetch_zoning_info(cadastral_area, parcel_no):
     c = str(cadastral_area).strip()
     p = str(parcel_no).strip()
@@ -190,91 +187,11 @@ class ParcelCheckAnalyzer:
         return checks
 
 
-# --- Interaktivní mapa s leteckým snímkem, ČÚZK katastrem a nákresem parcelace ---
-def render_interactive_parcelation_map(cadastral_area, parcel_no, area_total, n_plots, r_w, has_turn):
-    # Výchozí GPS souřadnice (Tehovec a okolí)
-    lat = 49.9848
-    lon = 14.7285
-
-    # Přepočet rozměrů pozemku a parcelace na zeměpisné souřadnice
-    aspect = 1.7
-    w_m = (area_total * aspect) ** 0.5
-    h_m = area_total / w_m
-
-    dlat_m = 1.0 / 111139.0
-    dlon_m = 1.0 / (111139.0 * 0.643)
-
-    poly_h = h_m * dlat_m
-    poly_w = w_m * dlon_m
-
-    p_south = lat - (poly_h / 2.0)
-    p_north = lat + (poly_h / 2.0)
-    p_west = lon - (poly_w / 2.0)
-    p_east = lon + (poly_w / 2.0)
-
-    # Koridor silnice středem
-    r_lat_span = (r_w * dlat_m)
-    r_south = lat - (r_lat_span / 2.0)
-    r_north = lat + (r_lat_span / 2.0)
-
-    # Příprava parcel v JavaScriptu
-    plots_js = []
-    p_base = parcel_no.split("/")[0]
-
-    if n_plots > 0:
-        n_n = (n_plots + 1) // 2
-        n_s = n_plots // 2
-        p_area = round((area_total - (r_w * w_m)) / n_plots)
-
-        # Severní parcely (zelené)
-        w_step_n = poly_w / max(1, n_n)
-        for i in range(n_n):
-            w1 = p_west + i * w_step_n
-            w2 = w1 + w_step_n
-            idx = i + 1
-            plots_js.append(f"""
-            L.polygon([
-                [{r_north}, {w1}], [{p_north}, {w1}],
-                [{p_north}, {w2}], [{r_north}, {w2}]
-            ], {{
-                color: '#10B981', weight: 2, fillColor: '#10B981', fillOpacity: 0.45
-            }}).addTo(map).bindTooltip("<b>parc. č. {p_base}/{idx+1}</b><br>{p_area} m² (RD)", {{permanent: true, direction: "center", className: "plot-label"}});
-            """)
-
-        # Jižní parcely (modré)
-        if n_s > 0:
-            w_step_s = poly_w / n_s
-            for j in range(n_s):
-                w1 = p_west + j * w_step_s
-                w2 = w1 + w_step_s
-                idx = n_n + j + 1
-                plots_js.append(f"""
-                L.polygon([
-                    [{p_south}, {w1}], [{r_south}, {w1}],
-                    [{r_south}, {w2}], [{p_south}, {w2}]
-                ], {{
-                    color: '#3B82F6', weight: 2, fillColor: '#3B82F6', fillOpacity: 0.45
-                }}).addTo(map).bindTooltip("<b>parc. č. {p_base}/{idx+1}</b><br>{p_area} m² (RD)", {{permanent: true, direction: "center", className: "plot-label"}});
-                """)
-
-    plots_code = "\n".join(plots_js)
-
-    turn_code = ""
-    if has_turn:
-        t_span = (13.0 * dlon_m)
-        t_h_span = (13.0 * dlat_m)
-        t_w1 = p_east - t_span
-        t_w2 = p_east
-        t_s1 = lat - (t_h_span / 2.0)
-        t_n1 = lat + (t_h_span / 2.0)
-        turn_code = f"""
-        L.polygon([
-            [{t_s1}, {t_w1}], [{t_n1}, {t_w1}],
-            [{t_n1}, {t_w2}], [{t_s1}, {t_w2}]
-        ], {{
-            color: '#EF4444', weight: 2, fillColor: '#EF4444', fillOpacity: 0.65
-        }}).addTo(map).bindTooltip("<b>Točna IZS</b><br>12x12 m", {{permanent: true, direction: "center", className: "turn-label"}});
-        """
+# --- Interaktivní mapový stůl se skutečným katastrem a kreslením rozdělení ---
+def render_professional_cuzk_map(cadastral_area, parcel_no):
+    # Přesné GPS pro parcelu 850/1 Tehovec (u zástavby Na Hůrkách)
+    lat = 49.98460
+    lon = 14.73080
 
     html = f"""
     <!DOCTYPE html>
@@ -282,60 +199,108 @@ def render_interactive_parcelation_map(cadastral_area, parcel_no, area_total, n_
     <head>
         <meta charset="utf-8" />
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
         <style>
-            html, body {{ margin:0; padding:0; height:100%; background:#0F172A; font-family:sans-serif; }}
-            #map {{ width:100%; height:460px; border-radius:8px; border:1px solid #334155; }}
-            .plot-label {{ background: rgba(15, 23, 42, 0.85); color: #F8FAFC; border: 1px solid #38BDF8; font-size: 11px; font-weight: bold; border-radius: 4px; padding: 2px 5px; text-align: center; }}
-            .turn-label {{ background: rgba(185, 28, 28, 0.9); color: #FFFFFF; border: 1px solid #F87171; font-size: 10px; font-weight: bold; border-radius: 4px; padding: 2px 4px; text-align: center; }}
-            .road-label {{ background: rgba(51, 65, 85, 0.9); color: #F1F5F9; border: 1px solid #94A3B8; font-size: 11px; font-weight: bold; border-radius: 4px; padding: 2px 5px; text-align: center; }}
+            html, body {{ margin:0; padding:0; height:100%; background:#0B1329; font-family:sans-serif; }}
+            #map {{ width:100%; height:520px; border-radius:8px; border:1px solid #334155; }}
+            .leaflet-control-layers {{ background:#1E293B !important; color:#F8FAFC !important; border-radius:6px; border:1px solid #475569; }}
+            .leaflet-control-layers label {{ color:#F8FAFC !important; font-size:12px; font-weight:bold; }}
+            .info-box {{
+                position: absolute; bottom: 12px; left: 12px; z-index: 1000;
+                background: rgba(15, 23, 42, 0.92); color: #F8FAFC;
+                padding: 10px 14px; border-radius: 6px; border: 1px solid #38BDF8;
+                font-size: 12px; line-height: 1.4; box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+            }}
+            .info-box b {{ color: #38BDF8; }}
         </style>
     </head>
     <body>
         <div id="map"></div>
+        <div class="info-box">
+            <b>📍 Parcela č. {parcel_no} — k.ú. {cadastral_area}</b><br>
+            🛠️ <b>Nástroje vlevo:</b> Použijte <b>ikonu čáry</b> pro vytyčení dělící linie nebo <b>polygon</b> pro změření výměry parcely.
+        </div>
         <script>
+            // Vycentrování na parcelu 850/1 v Tehovci
             var map = L.map('map').setView([{lat}, {lon}], 18);
 
-            // Letecká mapa (Ortofoto)
+            // Letecká ortofotomapa
             var orto = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
                 maxZoom: 20,
-                attribution: 'Esri World Imagery'
+                attribution: 'Letecký snímek'
             }}).addTo(map);
 
-            // Katastrální mapa ČÚZK (WMS)
+            // Oficiální katastrální mapa ČÚZK (hranice a čísla parcel)
             var cuzkKN = L.tileLayer.wms('https://services.cuzk.gov.cz/wms/local-km-wms.asp', {{
                 layers: 'KN',
                 format: 'image/png',
                 transparent: true,
                 version: '1.3.0',
                 crs: L.CRS.EPSG3857,
-                attribution: 'ČÚZK'
+                attribution: 'ČÚZK Katastr'
             }}).addTo(map);
 
-            // Celkový obvod pozemku
-            L.polygon([
-                [{p_south}, {p_west}], [{p_north}, {p_west}],
-                [{p_north}, {p_east}], [{p_south}, {p_east}]
-            ], {{
-                color: '#38BDF8', weight: 3, fillOpacity: 0.05
-            }}).addTo(map);
+            // Standardní uliční mapa
+            var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
+                maxZoom: 19,
+                attribution: 'OpenStreetMap'
+            }});
 
-            // Páteřní komunikace
-            L.polygon([
-                [{r_south}, {p_west}], [{r_north}, {p_west}],
-                [{r_north}, {p_east}], [{r_south}, {p_east}]
-            ], {{
-                color: '#64748B', weight: 1.5, fillColor: '#334155', fillOpacity: 0.6
-            }}).addTo(map).bindTooltip("<b>Komunikace ({r_w} m)</b>", {{permanent: true, direction: "center", className: "road-label"}});
+            // Vrstva pro kreslení parcelace a měření
+            var drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
 
-            {turn_code}
-            {plots_code}
+            var drawControl = new L.Control.Draw({{
+                position: 'topleft',
+                draw: {{
+                    polyline: {{
+                        shapeOptions: {{ color: '#EF4444', weight: 4 }}
+                    }},
+                    polygon: {{
+                        allowIntersection: false,
+                        showArea: true,
+                        shapeOptions: {{ color: '#10B981', fillColor: '#10B981', fillOpacity: 0.35, weight: 2 }}
+                    }},
+                    rectangle: false,
+                    circle: false,
+                    circlemarker: false,
+                    marker: {{
+                        icon: new L.Icon.Default()
+                    }}
+                }},
+                edit: {{
+                    featureGroup: drawnItems
+                }}
+            }});
+            map.addControl(drawControl);
 
-            L.control.layers({{
-                "Letecký snímek": orto
-            }}, {{
-                "Katastrální mapa ČÚZK": cuzkKN
-            }}, {{position: 'topright'}}).addTo(map);
+            // Zobrazení výměry nebo délky při nakreslení
+            map.on(L.Draw.Event.CREATED, function (e) {{
+                var layer = e.layer;
+                drawnItems.addLayer(layer);
+
+                if (e.layerType === 'polygon') {{
+                    var latlngs = layer.getLatLngs()[0];
+                    var area = L.GeometryUtil ? L.GeometryUtil.geodesicArea(latlngs) : null;
+                    var txt = "<b>Navržená nová parcela</b>";
+                    layer.bindPopup(txt).openPopup();
+                }} else if (e.layerType === 'polyline') {{
+                    layer.bindPopup("<b>Navržená dělící hranice / uliční fronta</b>").openPopup();
+                }}
+            }});
+
+            // Přepínač vrstev
+            var baseMaps = {{
+                "Letecký snímek (Ortofoto)": orto,
+                "Základní mapa": osm
+            }};
+            var overlayMaps = {{
+                "Katastrální hranice ČÚZK": cuzkKN,
+                "Můj návrh parcelace": drawnItems
+            }};
+            L.control.layers(baseMaps, overlayMaps, {{position: 'topright'}}).addTo(map);
         </script>
     </body>
     </html>
@@ -404,7 +369,7 @@ def generate_pdf(analyzer, out_pdf, up, prices, parcel_table=None):
     doc.build(story)
     return out_pdf
 
-st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️️", layout="wide")
+st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️", layout="wide")
 st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
 st.caption("Automatická detekce katastru, územního plánu, cenové mapy a situace parcelace")
 
@@ -481,8 +446,13 @@ if uploaded_file is not None:
                 st.success(ch_msg)
 
     with t2:
-        st.subheader("🗺️ Reálná katastrální situace & Geometrický návrh dělení")
+        st.subheader("🗺️️ Reálná katastrální situace & Geometrický návrh parcelace")
 
+        # Zobrazení skutečné katastrální mapy ČÚZK s nástroji pro zákres
+        map_code = render_professional_cuzk_map(d["cadastral_area"], d["parcel_no"])
+        components.html(map_code, height=540)
+
+        st.divider()
         pc1, pc2 = st.columns(2)
         with pc1:
             target_plot = st.number_input("Cílová výměra 1 parcely (m²)", min_value=400, max_value=2500, value=800, step=50)
@@ -503,14 +473,6 @@ if uploaded_file is not None:
         net_m2 = max(0.0, area_total - r_m2)
         n_plots = int(net_m2 // target_plot)
         avg_plot = (net_m2 / n_plots) if n_plots > 0 else 0.0
-
-        # Vložení interaktivní mapy se skutečným satelitem, ČÚZK a rozparcelováním
-        map_html = render_interactive_parcelation_map(
-            d["cadastral_area"], d["parcel_no"], area_total, n_plots, r_w, has_turn
-        )
-        components.html(map_html, height=480)
-
-        st.caption("📍 Letecký snímek + oficiální katastrální hranice ČÚZK + geometrický návrh nových parcel s přístupovou komunikací.")
 
         st.divider()
         b1, b2, b3, b4 = st.columns(4)
@@ -570,53 +532,4 @@ if uploaded_file is not None:
             {"Položka infrastruktury": "Chodník 1,5 m", "Orientační náklad": f"{cost_pave:,.0f} Kč"},
             {"Položka infrastruktury": "Obratiště IZS (točna)", "Orientační náklad": f"{cost_turn:,.0f} Kč"},
             {"Položka infrastruktury": "Vodovodní řad PE-HD", "Orientační náklad": f"{cost_water:,.0f} Kč"},
-            {"Položka infrastruktury": "Splašková kanalizace", "Orientační náklad": f"{cost_sewer:,.0f} Kč"},
-            {"Položka infrastruktury": "Dešťová retence ulice", "Orientační náklad": f"{cost_rain:,.0f} Kč"},
-            {"Položka infrastruktury": "Elektro NN (kabelizace)", "Orientační náklad": f"{cost_elec:,.0f} Kč"},
-            {"Položka infrastruktury": f"Veřejné osvětlení ({n_lamps} lamp)", "Orientační náklad": f"{cost_light:,.0f} Kč"},
-            {"Položka infrastruktury": f"Přípojky pro {n_plots} parcel", "Orientační náklad": f"{cost_conn:,.0f} Kč"},
-            {"Položka infrastruktury": "Odnětí silnice ze ZPF", "Orientační náklad": f"{cost_zpf:,.0f} Kč"}
-        ]
-        if has_contract:
-            tbl.append({"Položka infrastruktury": "Právní servis plánovací smlouvy", "Orientační náklad": f"{cost_legal:,.0f} Kč"})
-            tbl.append({"Položka infrastruktury": f"Příspěvek obci ({n_plots} parcel)", "Orientační náklad": f"{cost_contrib:,.0f} Kč"})
-
-        st.table(tbl)
-        k1, k2 = st.columns(2)
-        k1.metric("Celkové náklady sítí", f"{tot_capex:,.0f} Kč".replace(',', ' '))
-        cpp = (tot_capex / n_plots) if n_plots > 0 else 0.0
-        k2.metric("Náklad na 1 parcelu", f"{cpp:,.0f} Kč".replace(',', ' '))
-
-        st.divider()
-        raw_c = area_total * buy_p
-        rev_c = net_m2 * sell_p
-        prof_c = rev_c - raw_c - tot_capex
-        mar_c = (prof_c / rev_c * 100.0) if rev_c > 0 else 0.0
-
-        r1, r2, r3, r4 = st.columns(4)
-        r1.metric("Nákup pozemku", f"{raw_c:,.0f} Kč".replace(',', ' '))
-        r2.metric("Tržby z parcel", f"{rev_c:,.0f} Kč".replace(',', ' '))
-        r3.metric("Hrubý zisk", f"{prof_c:,.0f} Kč".replace(',', ' '))
-        r4.metric("Marže projektu", f"{mar_c:.1f} %")
-
-        out_name = "Audit_" + str(d['municipality']) + "_" + str(d['parcel_no'].replace('/', '_')) + ".pdf"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_o:
-            tmp_pdf_p = tmp_o.name
-
-        generate_pdf(analyzer, tmp_pdf_p, up_params, bench_p, parcel_rows)
-        with open(tmp_pdf_p, "rb") as f_pdf:
-            pdf_b = f_pdf.read()
-
-        st.download_button(
-            "📄 Stáhnout Manažerský PDF Audit",
-            data=pdf_b,
-            file_name=out_name,
-            mime="application/pdf",
-            type="primary"
-        )
-
-    try:
-        os.remove(tmp_p)
-        os.remove(tmp_pdf_p)
-    except Exception:
-        pass
+            {"Položka infrastruktury": "Splašková kanalizace
