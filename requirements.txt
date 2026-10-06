@@ -1,3 +1,4 @@
 streamlit
 reportlab
 pypdf
+requests
