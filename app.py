@@ -5,121 +5,63 @@ import re
 import pypdf
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    HRFlowable
-)
-from reportlab.lib.styles import (
-    getSampleStyleSheet,
-    ParagraphStyle
-)
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# --- Zajištění fontu s plnou podporou české diakritiky ---
+# --- Písma pro PDF s českou diakritikou ---
 def setup_czech_fonts():
     f_reg = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
     f_bld = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'
-    f_obl = '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'
-    
     if os.path.exists(f_reg):
         try:
             pdfmetrics.registerFont(TTFont('AppFont', f_reg))
             b_use = f_bld if os.path.exists(f_bld) else f_reg
             pdfmetrics.registerFont(TTFont('AppFont-Bold', b_use))
-            o_use = f_obl if os.path.exists(f_obl) else f_reg
-            pdfmetrics.registerFont(TTFont('AppFont-Oblique', o_use))
-            return 'AppFont', 'AppFont-Bold', 'AppFont-Oblique'
+            return 'AppFont', 'AppFont-Bold'
         except Exception:
             pass
-    return 'Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique'
+    return 'Helvetica', 'Helvetica-Bold'
 
-FONT_MAIN, FONT_BOLD, FONT_OBLIQUE = setup_czech_fonts()
+FONT_MAIN, FONT_BOLD = setup_czech_fonts()
 
-
+# --- Cenová mapa okresu ---
 def get_benchmark_prices(municipality, cadastral_area):
-    m_clean = str(municipality).lower()
-    c_clean = str(cadastral_area).lower()
-
-    if any(k in m_clean or k in c_clean for k in [
-        "tehovec", "říčany", "ricany", "mukařov", "babice"
-    ]):
+    m = str(municipality).lower()
+    c = str(cadastral_area).lower()
+    if any(k in m or k in c for k in ["tehovec", "říčany", "ricany", "mukařov", "babice"]):
         return {
-            "region": "Praha-východ (příměstský koridor)",
-            "raw_min": 2500,
-            "raw_avg": 3500,
-            "raw_max": 4500,
-            "serviced_min": 7500,
-            "serviced_avg": 9500,
-            "serviced_max": 12500,
-            "commercial_min": 3500,
-            "commercial_avg": 4800,
-            "commercial_max": 6500,
-            "confidence": "Vysoká (aktivní trh)"
-        }
-    elif "praha" in m_clean or "praha" in c_clean:
-        return {
-            "region": "Hlavní město Praha",
-            "raw_min": 5000,
-            "raw_avg": 8000,
-            "raw_max": 12000,
-            "serviced_min": 14000,
-            "serviced_avg": 18000,
-            "serviced_max": 25000,
-            "commercial_min": 6000,
-            "commercial_avg": 9000,
-            "commercial_max": 14000,
-            "confidence": "Vysoká"
+            "region": "Praha-východ (příměstský trh)",
+            "raw_avg": 3500, "serviced_avg": 9500, "comm_avg": 4800,
+            "raw_range": "2 500 – 4 500 Kč", "serviced_range": "7 500 – 12 500 Kč"
         }
     return {
         "region": "Regionální průměr ČR",
-        "raw_min": 1000,
-        "raw_avg": 1800,
-        "raw_max": 2800,
-        "serviced_min": 3500,
-        "serviced_avg": 5000,
-        "serviced_max": 7000,
-        "commercial_min": 2000,
-        "commercial_avg": 3000,
-        "commercial_max": 4200,
-        "confidence": "Orientační benchmark"
+        "raw_avg": 1800, "serviced_avg": 5000, "comm_avg": 3000,
+        "raw_range": "1 000 – 2 800 Kč", "serviced_range": "3 500 – 7 000 Kč"
     }
 
-
+# --- Územní plán ---
 def fetch_zoning_info(cadastral_area, parcel_no):
-    clean_area = str(cadastral_area).strip()
-    clean_parcel = str(parcel_no).strip()
-
-    if "Tehovec" in clean_area and "877" in clean_parcel:
+    c = str(cadastral_area).strip()
+    p = str(parcel_no).strip()
+    if "Tehovec" in c and "877" in p:
         return {
-            "source": "ÚP Tehovec (lokalita Z8 / GIS)",
-            "zone_code": "VD / OM (Z8)",
-            "zone_title": "VD/OM — Drobné výroby, sklady a komerce (Z8)",
+            "title": "VD/OM — Komerční plocha a sklady (lokalita Z8)",
             "is_commercial": True,
-            "requires_planning_contract": True,
-            "max_coverage_pct": 50.0,
-            "min_greenery_pct": 20.0,
-            "max_floors": "max. 10 m",
+            "requires_contract": True,
+            "cov_pct": 50.0, "grn_pct": 20.0,
             "note": "ZÁKAZ STAVBY RD. Podmíněno PLÁNOVACÍ SMLOUVOU s obcí!"
         }
-
     return {
-        "source": "Územní plán obce (standardní regulativ)",
-        "zone_code": "BI",
-        "zone_title": "BI — Bydlení v rodinných domech",
+        "title": "BI — Bydlení v rodinných domech",
         "is_commercial": False,
-        "requires_planning_contract": False,
-        "max_coverage_pct": 30.0,
-        "min_greenery_pct": 50.0,
-        "max_floors": "1 NP + podkroví (max. 9 m)",
-        "note": "Přípustná výstavba samostatného RD."
+        "requires_contract": False,
+        "cov_pct": 30.0, "grn_pct": 50.0,
+        "note": "Přípustná stavba rodinného domu."
     }
-
 
 class ParcelCheckAnalyzer:
     def __init__(self, raw_text):
@@ -127,291 +69,266 @@ class ParcelCheckAnalyzer:
         self.data = self._parse()
 
     def _parse(self):
-        p_match = re.search(
-            r"Objekt je dotčen změnou právního vztahu:\s*([^;\n\r]+)",
-            self.raw
-        )
-        has_plomba = bool(p_match)
-        plomba_id = p_match.group(1).strip() if p_match else ""
-
+        pm = re.search(r"Objekt je dotčen změnou právního vztahu:\s*([^;\n\r]+)", self.raw)
         data = {
-            "parcel_no": self._extract(
-                r"Parcelní číslo:\s*([0-9]+(?:/[0-9]+)?)"
-            ),
-            "municipality": self._extract(
-                r"Obec:\s*([^\n\r\[]+)"
-            ),
-            "cadastral_area": self._extract(
-                r"Katastrální území:\s*([^\n\r\[]+)"
-            ),
-            "lv_no": self._extract(
-                r"Číslo LV:\s*([0-9]+)"
-            ),
-            "area_m2": self._extract(
-                r"Výměra \[m2\]:\s*([0-9\s]+)"
-            ),
-            "land_type": self._extract(
-                r"Druh pozemku:\s*([^\n\r]+)"
-            ),
-            "owner": self._extract(
-                r"Vlastnické právo\s*(?:Podíl)?\s*\n\s*([^\n\r]+)"
-            ),
-            "protection": self._extract(
-                r"Způsob ochrany nemovitosti\s*Název\s*\n\s*([^\n\r]+)"
-            ),
+            "parcel_no": self._ex(r"Parcelní číslo:\s*([0-9]+(?:/[0-9]+)?)"),
+            "municipality": self._ex(r"Obec:\s*([^\n\r\[]+)"),
+            "cadastral_area": self._ex(r"Katastrální území:\s*([^\n\r\[]+)"),
+            "lv_no": self._ex(r"Číslo LV:\s*([0-9]+)"),
+            "area_m2": self._ex(r"Výměra \[m2\]:\s*([0-9\s]+)").replace(" ", ""),
+            "land_type": self._ex(r"Druh pozemku:\s*([^\n\r]+)"),
+            "owner": self._ex(r"Vlastnické právo\s*(?:Podíl)?\s*\n\s*([^\n\r]+)"),
+            "protection": self._ex(r"Způsob ochrany nemovitosti\s*Název\s*\n\s*([^\n\r]+)"),
             "limitations": "Nejsou evidována žádná omezení" in self.raw,
-            "has_building": "Součástí je stavba" in self.raw,
-            "bpej": self._extract(
-                r"BPEJ\s*Výměra\s*\n\s*([0-9]+)"
-            ),
+            "bpej": self._ex(r"BPEJ\s*Výměra\s*\n\s*([0-9]+)"),
             "mortgage": "Zástavní právo" in self.raw,
-            "easement": "Věcné břemeno" in self.raw or "Služebnost" in self.raw,
-            "has_plomba": has_plomba,
-            "plomba_id": plomba_id
+            "has_plomba": bool(pm),
+            "plomba_id": pm.group(1).strip() if pm else ""
         }
-        if data["area_m2"]:
-            data["area_m2"] = data["area_m2"].replace(" ", "").strip()
         return data
 
-    def _extract(self, pattern):
+    def _ex(self, pattern):
         m = re.search(pattern, self.raw)
         return m.group(1).strip() if m else ""
 
-    def evaluate_developer_rules(self, up_params=None):
+    def evaluate_rules(self, up):
         p = self.data
         try:
             area = float(p["area_m2"])
         except Exception:
             area = 1000.0
 
-        is_comm = up_params.get("is_commercial", False) if up_params else False
-        cov_def = 50.0 if is_comm else 30.0
-        grn_def = 20.0 if is_comm else 50.0
-        cov_pct = float(up_params.get("max_coverage_pct", cov_def))
-        grn_pct = float(up_params.get("min_greenery_pct", grn_def))
-        max_footprint = area * (cov_pct / 100.0)
-        min_green_m2 = area * (grn_pct / 100.0)
-
+        cov = up["cov_pct"]
+        max_footprint = area * (cov / 100.0)
         checks = []
 
-        if p.get("has_plomba", False):
+        if p["has_plomba"]:
             checks.append({
-                "category": "PLOMBA (STOPKA)",
-                "status": "DANGER",
-                "title": f"Změna právního vztahu: {p['plomba_id']}",
-                "detail": (
-                    f"Aktivní vkladové řízení ({p['plomba_id']}). "
-                    "ZÁKAZ PLATBY: Nutno nahlédnout do spisu na KN!"
-                )
+                "cat": "PLOMBA (STOPKA)", "stat": "DANGER",
+                "title": f"Aktivní plomba: {p['plomba_id']}",
+                "detail": "Probíhá vkladové řízení na katastru. ZÁKAZ PLATBY před nahlédnutím do spisu!"
             })
         else:
             checks.append({
-                "category": "Probíhající řízení",
-                "status": "PASS",
-                "title": "Nemovitost je bez plomby",
-                "detail": "K nemovitosti neběží žádné zaplombované řízení."
+                "cat": "Řízení na KN", "stat": "PASS",
+                "title": "Bez plomby", "detail": "K nemovitosti neběží žádné zaplombované řízení."
             })
 
-        if is_comm:
+        if up["is_commercial"]:
             checks.append({
-                "category": "Územní plán & Funkční zóna",
-                "status": "WARNING",
-                "title": f"Komerční zóna: {up_params.get('zone_type', 'VD/OM')}",
-                "detail": (
-                    "ZÁKAZ RODINNÝCH DOMŮ. Povolena výroba a komerce. "
-                    f"Max. zastavěnost {cov_pct:.0f} % = {max_footprint:.1f} m²."
-                )
+                "cat": "Územní plán", "stat": "WARNING",
+                "title": f"Komerční zóna: {up['title']}",
+                "detail": f"ZÁKAZ RODINNÝCH DOMŮ. Max. zastavěnost {cov:.0f} % = {max_footprint:.1f} m²."
             })
         else:
             checks.append({
-                "category": "Územní plán & Funkční zóna",
-                "status": "PASS",
-                "title": f"Obytná zóna: {up_params.get('zone_type', 'BI')}",
-                "detail": (
-                    "Přípustná stavba rodinného domu. "
-                    f"Max. zastavěnost {cov_pct:.0f} % = {max_footprint:.1f} m²."
-                )
+                "cat": "Územní plán", "stat": "PASS",
+                "title": f"Obytná zóna: {up['title']}",
+                "detail": f"Přípustná stavba rodinného domu. Max. zastavěnost {cov:.0f} % = {max_footprint:.1f} m²."
             })
 
-        req_contract = up_params.get("requires_planning_contract", False)
-        if req_contract:
+        if up.get("requires_contract", False):
             checks.append({
-                "category": "Podmínka rozvoje",
-                "status": "WARNING",
+                "cat": "Podmínka rozvoje", "stat": "WARNING",
                 "title": "Vyžadována Plánovací smlouva s obcí (§ 130 SZ)",
-                "detail": (
-                    "Povolení stavby vyžaduje schválení plánovací smlouvy "
-                    "zastupitelstvem obce (infrastruktura a kontribuce)."
-                )
+                "detail": "Povolení stavby vyžaduje schválení smlouvy zastupitelstvem obce (infrastruktura / příspěvek)."
             })
 
         if p["mortgage"]:
             checks.append({
-                "category": "Zástavní práva",
-                "status": "WARNING",
+                "cat": "Zástavní práva", "stat": "WARNING",
                 "title": "Na pozemku vázne zástavní právo",
-                "detail": "Podmínit výplatu ceny kvitancí a výmazem zástavy."
+                "detail": "V kupní smlouvě podmínit platbu kvitancí věřitele a výmazem zástavy."
             })
         elif p["limitations"]:
             checks.append({
-                "category": "Právní stav",
-                "status": "PASS",
-                "title": "V části C nejsou evidována žádná omezení",
-                "detail": "Bez zástav, exekucí či věcných břemen."
+                "cat": "Právní stav", "stat": "PASS",
+                "title": "V části C nejsou evidována omezení",
+                "detail": "Pozemek je bez zástav a věcných břemen."
             })
 
-        if "zemědělský" in p["protection"].lower() or p["land_type"] in [
-            "trvalý travní porost", "orná půda", "zahrada"
-        ]:
-            bpej_str = p['bpej'] if p['bpej'] else "Dle bonity"
+        if not up.get("nets_verified", False):
             checks.append({
-                "category": "Zemědělský půdní fond (ZPF)",
-                "status": "INFO",
-                "title": f"Druh: {p['land_type']} — odnětí ze ZPF (BPEJ: {bpej_str})",
-                "detail": f"Výměra {area:.0f} m² spadá do fondu ZPF."
-            })
-
-        nets_ok = up_params.get("nets_verified", False)
-        if not nets_ok:
-            checks.append({
-                "category": "Inženýrské sítě (DTM)",
-                "status": "WARNING",
-                "title": "Sítě nejsou na pozemku ověřeny (nejsou v KN)",
-                "detail": "Nutno podat žádost o vyjádření k existenci sítí."
+                "cat": "Inženýrské sítě", "stat": "WARNING",
+                "title": "Sítě nejsou na pozemku ověřeny",
+                "detail": "V katastru sítě nejsou. Nutno podat žádost o vyjádření k existenci sítí."
             })
         else:
             checks.append({
-                "category": "Inženýrské sítě (DTM)",
-                "status": "PASS",
-                "title": "Sítě uživatelsky potvrzeny v dosahu",
-                "detail": "Dle technické dokumentace záměru."
+                "cat": "Inženýrské sítě", "stat": "PASS",
+                "title": "Sítě potvrzeny v dosahu",
+                "detail": "Dle technické dokumentace a vyjádření správců."
             })
 
         return checks
 
-
-def generate_pdf_report(analyzer, output_pdf, up_params=None, price_info=None):
-    data = analyzer.data
-    evals = analyzer.evaluate_developer_rules(up_params)
-
-    doc = SimpleDocTemplate(
-        output_pdf,
-        pagesize=A4,
-        rightMargin=1.5*cm,
-        leftMargin=1.5*cm,
-        topMargin=1.5*cm,
-        bottomMargin=1.5*cm
-    )
-
+def generate_pdf(analyzer, out_pdf, up, prices):
+    d = analyzer.data
+    evals = analyzer.evaluate_rules(up)
+    doc = SimpleDocTemplate(out_pdf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
     styles = getSampleStyleSheet()
+
     c_blue = colors.HexColor('#1F4E79')
-    c_gray = colors.HexColor('#555555')
-    c_dark = colors.HexColor('#222222')
-    c_green = colors.HexColor('#1B5E20')
-    c_orange = colors.HexColor('#E65100')
     c_red = colors.HexColor('#B71C1C')
-    c_navy = colors.HexColor('#0D47A1')
-
-    title_s = ParagraphStyle(
-        'DocT',
-        parent=styles['Heading1'],
-        fontName=FONT_BOLD,
-        fontSize=14,
-        leading=18,
-        textColor=c_blue,
-        spaceAfter=3
-    )
-    sub_s = ParagraphStyle(
-        'DocSub',
-        parent=styles['Normal'],
-        fontName=FONT_OBLIQUE,
-        fontSize=8.5,
-        leading=12,
-        textColor=c_gray,
-        spaceAfter=8
-    )
-    h2_s = ParagraphStyle(
-        'DocH2',
-        parent=styles['Heading2'],
-        fontName=FONT_BOLD,
-        fontSize=10.5,
-        leading=14,
-        textColor=c_blue,
-        spaceBefore=7,
-        spaceAfter=4
-    )
-    body_s = ParagraphStyle(
-        'DocB',
-        parent=styles['Normal'],
-        fontName=FONT_MAIN,
-        fontSize=8,
-        leading=11,
-        textColor=c_dark
-    )
-
-    badge_pass = ParagraphStyle('BP', fontName=FONT_BOLD, fontSize=7, textColor=c_green, alignment=1)
-    badge_warn = ParagraphStyle('BW', fontName=FONT_BOLD, fontSize=7, textColor=c_orange, alignment=1)
-    badge_danger = ParagraphStyle('BD', fontName=FONT_BOLD, fontSize=7, textColor=c_red, alignment=1)
-    badge_info = ParagraphStyle('BI', fontName=FONT_BOLD, fontSize=7, textColor=c_navy, alignment=1)
+    t_s = ParagraphStyle('T', fontName=FONT_BOLD, fontSize=14, leading=18, textColor=c_blue)
+    b_s = ParagraphStyle('B', fontName=FONT_MAIN, fontSize=8.5, leading=12)
+    bp = ParagraphStyle('BP', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.HexColor('#1B5E20'), alignment=1)
+    bw = ParagraphStyle('BW', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.HexColor('#E65100'), alignment=1)
+    bd = ParagraphStyle('BD', fontName=FONT_BOLD, fontSize=7.5, textColor=c_red, alignment=1)
 
     story = []
-    story.append(Paragraph("PARCELCHECK AI — DEVELOPERSKÝ AUDIT POZEMKU", title_s))
-    story.append(Paragraph(
-        f"Parcela č. {data['parcel_no']} | k.ú. {data['cadastral_area']} (obec {data['municipality']}) | LV {data['lv_no']}",
-        sub_s
-    ))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=c_blue, spaceBefore=2, spaceAfter=6))
+    story.append(Paragraph("PARCELCHECK AI — AUDIT POZEMKU", t_s))
+    story.append(Paragraph(f"Parcela č. {d['parcel_no']} | k.ú. {d['cadastral_area']} ({d['municipality']}) | LV {d['lv_no']}", b_s))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=c_blue, spaceBefore=3, spaceAfter=8))
 
-    if data.get("has_plomba", False):
-        p_text = f"<b>POZOR: NA POZEMKU VÁZNE PLOMBA ({data['plomba_id']})</b><br/>Probíhá změna právního vztahu. Nutno nahlédnout do spisu na KN!"
-        p_style = ParagraphStyle('PlWarn', fontName=FONT_BOLD, fontSize=8.5, textColor=c_red)
-        t_plomba = Table([[Paragraph(p_text, p_style)]], colWidths=[18.0*cm])
-        t_plomba.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')),
-            ('BOX', (0,0), (-1,-1), 1.2, c_red),
-            ('TOPPADDING', (0,0), (-1,-1), 5),
-            ('BOTTOMPADDING', (0,0), (-1,-1), 5),
-        ]))
-        story.append(t_plomba)
+    if d["has_plomba"]:
+        tp = Table([[Paragraph(f"<b>STOPKA: NA POZEMKU VÁZNE PLOMBA ({d['plomba_id']})</b>", ParagraphStyle('P', fontName=FONT_BOLD, fontSize=9, textColor=c_red))]], colWidths=[18*cm])
+        tp.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')), ('BOX', (0,0), (-1,-1), 1, c_red), ('PADDING', (0,0), (-1,-1), 5)]))
+        story.append(tp)
         story.append(Spacer(1, 6))
 
-    t_data = [
-        [Paragraph("<b>Lokalita:</b>", body_s), Paragraph(f"{data['municipality']} ({data['cadastral_area']})", body_s),
-         Paragraph("<b>Výměra:</b>", body_s), Paragraph(f"{data['area_m2']} m²", body_s)],
-        [Paragraph("<b>Parcela / LV:</b>", body_s), Paragraph(f"{data['parcel_no']} / LV {data['lv_no']}", body_s),
-         Paragraph("<b>Druh:</b>", body_s), Paragraph(f"{data['land_type']}", body_s)],
-        [Paragraph("<b>Vlastník:</b>", body_s), Paragraph(f"{data['owner'][:30]}...", body_s),
-         Paragraph("<b>Ochrana:</b>", body_s), Paragraph(f"{data['protection'] if data['protection'] else 'Běžná'}", body_s)]
+    info_data = [
+        [Paragraph(f"<b>Lokalita:</b> {d['municipality']}", b_s), Paragraph(f"<b>Výměra:</b> {d['area_m2']} m²", b_s)],
+        [Paragraph(f"<b>Parcela / LV:</b> {d['parcel_no']} / {d['lv_no']}", b_s), Paragraph(f"<b>Druh:</b> {d['land_type']}", b_s)]
     ]
-    t_info = Table(t_data, colWidths=[3.0*cm, 6.0*cm, 3.0*cm, 6.0*cm])
-    t_info.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
-        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
-        ('TOPPADDING', (0,0), (-1,-1), 3),
-        ('BOTTOMPADDING', (0,0), (-1,-1), 3),
-    ]))
+    t_info = Table(info_data, colWidths=[9*cm, 9*cm])
+    t_info.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 4)]))
     story.append(t_info)
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 8))
 
-    story.append(Paragraph("1. Limity územního plánu a developerská zastavitelnost", h2_s))
+    story.append(Paragraph("<b>Semafor developerských rizik:</b>", t_s))
+    for item in evals:
+        bg = '#FFEBEE' if item['stat'] == 'DANGER' else ('#FFF3E0' if item['stat'] == 'WARNING' else '#E8F5E9')
+        badge = bd if item['stat'] == 'DANGER' else (bw if item['stat'] == 'WARNING' else bp)
+        st_label = "STOPKA" if item['stat'] == 'DANGER' else ("POZOR" if item['stat'] == 'WARNING' else "OK")
+        row = [
+            [Paragraph(f"<b>[{item['cat']}] {item['title']}</b>", b_s), Paragraph(st_label, badge)],
+            [Paragraph(item['detail'], b_s), ""]
+        ]
+        tr = Table(row, colWidths=[14.5*cm, 3.5*cm])
+        tr.setStyle(TableStyle([('SPAN', (0,1), (1,1)), ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(bg)), ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 4)]))
+        story.append(tr)
+        story.append(Spacer(1, 3))
+
+    doc.build(story)
+    return out_pdf
+
+# ==================== STREAMLIT ROZHRANÍ ====================
+st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️", layout="wide")
+
+st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
+st.caption("Automatická detekce katastrálních rizik, územního plánu, cenové mapy a infrastruktury")
+
+with st.sidebar:
+    st.header("⚙️ Ověření pozemku")
+    nets_ok = st.checkbox("Mám ověřeno fyzické napojení na sítě", value=False)
+    st.caption("Při nezaškrtnutí systém sítě uvádí jako neověřené riziko.")
+
+uploaded_file = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN", type=["pdf"])
+
+if uploaded_file is not None:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(uploaded_file.read())
+        tmp_p = tmp.name
+
+    reader = pypdf.PdfReader(tmp_p)
+    text = "".join([p.extract_text() or "" for p in reader.pages])
+
+    analyzer = ParcelCheckAnalyzer(text)
+    d = analyzer.data
     try:
-        area_val = float(data['area_m2'])
+        area_total = float(d['area_m2'])
     except Exception:
-        area_val = 1000.0
+        area_total = 1000.0
 
-    is_comm = up_params.get("is_commercial", False) if up_params else False
-    cov_pct = float(up_params.get("max_coverage_pct", 50.0 if is_comm else 30.0))
-    green_pct = float(up_params.get("min_greenery_pct", 20.0 if is_comm else 50.0))
-    max_cov = area_val * (cov_pct / 100.0)
-    min_green = area_val * (green_pct / 100.0)
-    req_c = up_params.get("requires_planning_contract", False)
-    c_note = "ANO (podmínka pro výstavbu)" if req_c else "Nevyžadována"
+    auto_up = fetch_zoning_info(d["cadastral_area"], d["parcel_no"])
+    bench_p = get_benchmark_prices(d["municipality"], d["cadastral_area"])
 
-    dev_data = [
-        [Paragraph("<b>Ukazatel</b>", body_s), Paragraph("<b>Hodnota Územního plánu</b>", body_s), Paragraph("<b>Kapacita na parcele</b>", body_s)],
-        [Paragraph("Funkční zóna ÚP", body_s), Paragraph(up_params.get('zone_type', 'VD/OM'), body_s), Paragraph("Komerční areál / výroba (ZÁKAZ RD)", body_s) if is_comm else Paragraph("1 rodinný dům", body_s)],
-        [Paragraph("Plánovací smlouva s obcí", body_s), Paragraph(c_note, body_s), Paragraph("Nutno předložit zastupitelstvu", body_s) if req_c else Paragraph("Běžné stavební řízení", body_s)],
-        [Paragraph("Max. zastavěnost (KZP)", body_s), Paragraph(f"max. {cov_pct:.0f} %", body_s), Paragraph(f"<b>max. {max_cov:.1f} m²</b>", body_s)],
-        [Paragraph("Min. podíl zeleně (KZ)", body_s), Paragraph(f"min. {green_pct:.0f} %", body_s), Paragraph(f"<b>min. {min_green:.1f} m²</b>", body_s)],
-    ]
+    if d["has_plomba"]:
+        st.error(f"🚨 **KRITICKÉ UPOZORNĚNÍ: PLOMBA ({d['plomba_id']})!** Zákaz podpisu a platby bez nahlédnutí do spisu.")
+    else:
+        st.success(f"Parcela č. **{d['parcel_no']}**, k.ú. **{d['cadastral_area']}** — bez evidované plomby.")
+
+    up_params = {
+        "title": auto_up["title"],
+        "is_commercial": auto_up["is_commercial"],
+        "requires_contract": auto_up.get("requires_contract", False),
+        "cov_pct": float(auto_up["cov_pct"]),
+        "grn_pct": float(auto_up["grn_pct"]),
+        "nets_verified": nets_ok
+    }
+
+    t1, t2 = st.tabs(["📋 1. Právní & Územní Audit", "📐 2. Developerská parcelace a rozpočet"])
+
+    with t1:
+        if auto_up["is_commercial"]:
+            st.warning(f"📍 **Územní plán:** {auto_up['title']}\n\n⚠️ {auto_up['note']}")
+        else:
+            st.info(f"📍 **Územní plán:** {auto_up['title']}\n\n✅ {auto_up['note']}")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Výměra", f"{d['area_m2']} m²")
+        cov_val = auto_up['cov_pct']
+        c2.metric("Max. zastavěnost", f"{(area_total * cov_val / 100):.1f} m²", f"{cov_val:.0f} %")
+        grn_val = auto_up['grn_pct']
+        c3.metric("Min. zeleň", f"{(area_total * grn_val / 100):.1f} m²", f"{grn_val:.0f} %")
+        c4.metric("Sítě", "Potvrzeno" if nets_ok else "NEOVĚŘENO")
+
+        st.subheader("📊 Cenová mapa lokality")
+        st.caption(f"Oblast: **{bench_p['region']}**")
+        cp1, cp2, cp3 = st.columns(3)
+        cp1.metric("Nezasíťovaný pozemek", f"{bench_p['raw_avg']:,} Kč/m²", bench_p['raw_range'])
+        cp2.metric("Zasíťovaná parcela RD", f"{bench_p['serviced_avg']:,} Kč/m²", bench_p['serviced_range'])
+        cp3.metric("Komerční areál", f"{bench_p['comm_avg']:,} Kč/m²")
+
+        st.subheader("📋 Semafor developerských rizik")
+        for check in analyzer.evaluate_rules(up_params):
+            if check["stat"] == "DANGER":
+                st.error(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
+            elif check["stat"] == "WARNING":
+                st.warning(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
+            else:
+                st.success(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
+
+        out_name = f"Audit_{d['municipality']}_{d['parcel_no'].replace('/', '_')}.pdf"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_o:
+            tmp_pdf_p = tmp_o.name
+
+        generate_pdf(analyzer, tmp_pdf_p, up_params, bench_p)
+        with open(tmp_pdf_p, "rb") as f_pdf:
+            pdf_b = f_pdf.read()
+
+        st.download_button("📄 Stáhnout Manažerský PDF Audit", data=pdf_b, file_name=out_name, mime="application/pdf", type="primary")
+
+    with t2:
+        st.subheader("📐 Návrh parcelace a rozpočet infrastruktury dle ČSN")
+        pc1, pc2 = st.columns(2)
+        with pc1:
+            target_plot = st.number_input("Cílová výměra 1 parcely (m²)", min_value=400, max_value=2500, value=800, step=50)
+            road_sel = st.selectbox("Typ uličního profilu", ["Standardní (8,0 m s chodníkem)", "Úsporná (6,5 m)"])
+            has_turn = st.checkbox("Slepá ulice delší než 50 m (obratiště IZS)", value=True)
+            has_contract = st.checkbox("Vyžadována plánovací smlouva s obcí (Z8 / rozvoj)", value=auto_up.get("requires_contract", False))
+            contrib = st.number_input("Příspěvek obci na 1 parcelu (Kč)", min_value=0, max_value=500000, value=150000 if has_contract else 0, step=25000) if has_contract else 0
+
+        with pc2:
+            buy_p = st.number_input("Nákup surového pozemku (Kč/m²)", value=int(bench_p['raw_avg']), step=100)
+            def_s = bench_p['comm_avg'] if auto_up['is_commercial'] else bench_p['serviced_avg']
+            sell_p = st.number_input("Prodej zasíťované parcely (Kč/m²)", value=int(def_s), step=200)
+
+        r_w = 8.0 if "8,0" in road_sel else 6.5
+        turn_m2 = 130.0 if has_turn else 0.0
+        r_len = max(35.0, round((area_total ** 0.5) * 1.15, 0))
+        r_m2 = (r_len * r_w) + turn_m2
+        net_m2 = max(0.0, area_total - r_m2)
+        n_plots = int(net_m2 // target_plot)
+        avg_plot = (net_m2 / n_plots) if n_plots > 0 else 0.0
+
+        st.divider()
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("Celková výměra", f"{area_total:.0f} m²")
+        b2.metric("Silnice a točna", f"{r_m2:.0f} m²", f"{(r_m2/area_total*100):.1f} %")
+        b3.metric("Čistá plocha parcel", f"{net_m2:.0f} m²")
+        b4.metric("Počet parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
+
+        st.divider()
+        c_road
