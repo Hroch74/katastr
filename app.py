@@ -186,10 +186,7 @@ class ParcelCheckAnalyzer:
 
         return checks
 
-
-# --- Interaktivní mapový stůl se skutečným katastrem a kreslením rozdělení ---
 def render_professional_cuzk_map(cadastral_area, parcel_no):
-    # Přesné GPS pro parcelu 850/1 Tehovec (u zástavby Na Hůrkách)
     lat = 49.98460
     lon = 14.73080
 
@@ -220,19 +217,16 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
         <div id="map"></div>
         <div class="info-box">
             <b>📍 Parcela č. {parcel_no} — k.ú. {cadastral_area}</b><br>
-            🛠️ <b>Nástroje vlevo:</b> Použijte <b>ikonu čáry</b> pro vytyčení dělící linie nebo <b>polygon</b> pro změření výměry parcely.
+            🛠️ <b>Nástroje vlevo nahoře:</b> Kreslení dělící linie (čára) nebo zaměření parcely (polygon).
         </div>
         <script>
-            // Vycentrování na parcelu 850/1 v Tehovci
             var map = L.map('map').setView([{lat}, {lon}], 18);
 
-            // Letecká ortofotomapa
             var orto = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
                 maxZoom: 20,
                 attribution: 'Letecký snímek'
             }}).addTo(map);
 
-            // Oficiální katastrální mapa ČÚZK (hranice a čísla parcel)
             var cuzkKN = L.tileLayer.wms('https://services.cuzk.gov.cz/wms/local-km-wms.asp', {{
                 layers: 'KN',
                 format: 'image/png',
@@ -242,13 +236,11 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
                 attribution: 'ČÚZK Katastr'
             }}).addTo(map);
 
-            // Standardní uliční mapa
             var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
                 maxZoom: 19,
                 attribution: 'OpenStreetMap'
             }});
 
-            // Vrstva pro kreslení parcelace a měření
             var drawnItems = new L.FeatureGroup();
             map.addLayer(drawnItems);
 
@@ -276,29 +268,23 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
             }});
             map.addControl(drawControl);
 
-            // Zobrazení výměry nebo délky při nakreslení
             map.on(L.Draw.Event.CREATED, function (e) {{
                 var layer = e.layer;
                 drawnItems.addLayer(layer);
-
                 if (e.layerType === 'polygon') {{
-                    var latlngs = layer.getLatLngs()[0];
-                    var area = L.GeometryUtil ? L.GeometryUtil.geodesicArea(latlngs) : null;
-                    var txt = "<b>Navržená nová parcela</b>";
-                    layer.bindPopup(txt).openPopup();
+                    layer.bindPopup("<b>Navržená nová parcela</b>").openPopup();
                 }} else if (e.layerType === 'polyline') {{
-                    layer.bindPopup("<b>Navržená dělící hranice / uliční fronta</b>").openPopup();
+                    layer.bindPopup("<b>Dělící linie / uliční fronta</b>").openPopup();
                 }}
             }});
 
-            // Přepínač vrstev
             var baseMaps = {{
                 "Letecký snímek (Ortofoto)": orto,
                 "Základní mapa": osm
             }};
             var overlayMaps = {{
                 "Katastrální hranice ČÚZK": cuzkKN,
-                "Můj návrh parcelace": drawnItems
+                "Návrh parcelace": drawnItems
             }};
             L.control.layers(baseMaps, overlayMaps, {{position: 'topright'}}).addTo(map);
         </script>
@@ -306,7 +292,6 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
     </html>
     """
     return html
-
 
 def generate_pdf(analyzer, out_pdf, up, prices, parcel_table=None):
     d = analyzer.data
@@ -448,7 +433,6 @@ if uploaded_file is not None:
     with t2:
         st.subheader("🗺️️ Reálná katastrální situace & Geometrický návrh parcelace")
 
-        # Zobrazení skutečné katastrální mapy ČÚZK s nástroji pro zákres
         map_code = render_professional_cuzk_map(d["cadastral_area"], d["parcel_no"])
         components.html(map_code, height=540)
 
@@ -488,48 +472,4 @@ if uploaded_file is not None:
         p_base = d["parcel_no"].split("/")[0]
         
         parcel_rows.append({
-            "Označení parcely": "parc. č. " + str(p_base) + "/A",
-            "Účel využití": "Ostatní plocha — komunikace a obratiště IZS",
-            "Výměra": f"{r_m2:.0f} m²",
-            "Přístup": "Napojení na stávající obecní komunikaci"
-        })
-        
-        for i in range(1, n_plots + 1):
-            parcel_rows.append({
-                "Označení parcely": "parc. č. " + str(p_base) + "/" + str(i+1),
-                "Účel využití": "Stavební pozemek pro RD",
-                "Výměra": f"{avg_plot:.0f} m²",
-                "Přístup": "Sjezd z nově zřízené parcely " + str(p_base) + "/A"
-            })
-            
-        st.table(parcel_rows)
-
-        st.divider()
-        st.markdown("#### 🛠️ Položkový rozpočet infrastruktury")
-        unit_road = 14000.0 if r_w == 8.0 else 11000.0
-        cost_road = r_len * unit_road
-        cost_pave = r_len * 4000.0 if r_w == 8.0 else 0.0
-        cost_water = r_len * 4200.0
-        cost_sewer = r_len * 7500.0
-        cost_rain = r_len * 5000.0
-        cost_elec = r_len * 3200.0
-        n_lamps = max(2, int(r_len // 30) + 1)
-        cost_light = n_lamps * 45000.0
-        cost_conn = n_plots * 110000.0
-        cost_turn = turn_m2 * 1800.0 if has_turn else 0.0
-        cost_zpf = r_m2 * 250.0
-        cost_legal = 120000.0 if has_contract else 0.0
-        cost_contrib = n_plots * contrib if has_contract else 0.0
-
-        tot_capex = (
-            cost_road + cost_pave + cost_water + cost_sewer + cost_rain +
-            cost_elec + cost_light + cost_conn + cost_turn + cost_zpf +
-            cost_legal + cost_contrib
-        )
-
-        tbl = [
-            {"Položka infrastruktury": f"Komunikace ({r_len:.0f} bm, šířka {r_w} m)", "Orientační náklad": f"{cost_road:,.0f} Kč"},
-            {"Položka infrastruktury": "Chodník 1,5 m", "Orientační náklad": f"{cost_pave:,.0f} Kč"},
-            {"Položka infrastruktury": "Obratiště IZS (točna)", "Orientační náklad": f"{cost_turn:,.0f} Kč"},
-            {"Položka infrastruktury": "Vodovodní řad PE-HD", "Orientační náklad": f"{cost_water:,.0f} Kč"},
-            {"Položka infrastruktury": "Splašková kanalizace
+            "Označení parcely":
