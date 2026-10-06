@@ -220,7 +220,7 @@ st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
 st.caption("Automatická detekce katastrálních rizik, územního plánu, cenové mapy a infrastruktury")
 
 with st.sidebar:
-    st.header("⚙️ Ověření pozemku")
+    st.header("⚙️️ Ověření pozemku")
     nets_ok = st.checkbox("Mám ověřeno fyzické napojení na sítě", value=False)
     st.caption("Při nezaškrtnutí systém sítě uvádí jako neověřené riziko.")
 
@@ -331,4 +331,59 @@ if uploaded_file is not None:
         b4.metric("Počet parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
 
         st.divider()
-        c_road
+        unit_road = 14000.0 if r_w == 8.0 else 11000.0
+        cost_road = r_len * unit_road
+        cost_pave = r_len * 4000.0 if r_w == 8.0 else 0.0
+        cost_water = r_len * 4200.0
+        cost_sewer = r_len * 7500.0
+        cost_rain = r_len * 5000.0
+        cost_elec = r_len * 3200.0
+        n_lamps = max(2, int(r_len // 30) + 1)
+        cost_light = n_lamps * 45000.0
+        cost_conn = n_plots * 110000.0
+        cost_turn = turn_m2 * 1800.0 if has_turn else 0.0
+        cost_zpf = r_m2 * 250.0
+        cost_legal = 120000.0 if has_contract else 0.0
+        cost_contrib = n_plots * contrib if has_contract else 0.0
+
+        tot_capex = cost_road + cost_pave + cost_water + cost_sewer + cost_rain + cost_elec + cost_light + cost_conn + cost_turn + cost_zpf + cost_legal + cost_contrib
+
+        tbl = [
+            {"Položka infrastruktury": f"Komunikace ({r_len:.0f} bm, šířka {r_w} m)", "Orientační náklad": f"{cost_road:,.0f} Kč"},
+            {"Položka infrastruktury": "Chodník 1,5 m", "Orientační náklad": f"{cost_pave:,.0f} Kč"},
+            {"Položka infrastruktury": "Obratiště IZS (točna)", "Orientační náklad": f"{cost_turn:,.0f} Kč"},
+            {"Položka infrastruktury": "Vodovodní řad PE-HD", "Orientační náklad": f"{cost_water:,.0f} Kč"},
+            {"Položka infrastruktury": "Splašková kanalizace", "Orientační náklad": f"{cost_sewer:,.0f} Kč"},
+            {"Položka infrastruktury": "Dešťová retence ulice", "Orientační náklad": f"{cost_rain:,.0f} Kč"},
+            {"Položka infrastruktury": "Elektro NN (kabelizace)", "Orientační náklad": f"{cost_elec:,.0f} Kč"},
+            {"Položka infrastruktury": f"Veřejné osvětlení ({n_lamps} lamp)", "Orientační náklad": f"{cost_light:,.0f} Kč"},
+            {"Položka infrastruktury": f"Přípojky pro {n_plots} parcel", "Orientační náklad": f"{cost_conn:,.0f} Kč"},
+            {"Položka infrastruktury": "Odnětí silnice ze ZPF", "Orientační náklad": f"{cost_zpf:,.0f} Kč"}
+        ]
+        if has_contract:
+            tbl.append({"Položka infrastruktury": "Právní servis plánovací smlouvy", "Orientační náklad": f"{cost_legal:,.0f} Kč"})
+            tbl.append({"Položka infrastruktury": f"Příspěvek obci ({n_plots} parcel)", "Orientační náklad": f"{cost_contrib:,.0f} Kč"})
+
+        st.table(tbl)
+        k1, k2 = st.columns(2)
+        k1.metric("Celkové náklady sítí", f"{tot_capex:,.0f} Kč".replace(',', ' '))
+        cpp = (tot_capex / n_plots) if n_plots > 0 else 0.0
+        k2.metric("Náklad na 1 parcelu", f"{cpp:,.0f} Kč".replace(',', ' '))
+
+        st.divider()
+        raw_c = area_total * buy_p
+        rev_c = net_m2 * sell_p
+        prof_c = rev_c - raw_c - tot_capex
+        mar_c = (prof_c / rev_c * 100.0) if rev_c > 0 else 0.0
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Nákup pozemku", f"{raw_c:,.0f} Kč".replace(',', ' '))
+        r2.metric("Tržby z parcel", f"{rev_c:,.0f} Kč".replace(',', ' '))
+        r3.metric("Hrubý zisk", f"{prof_c:,.0f} Kč".replace(',', ' '))
+        r4.metric("Marže projektu", f"{mar_c:.1f} %")
+
+    try:
+        os.remove(tmp_p)
+        os.remove(tmp_pdf_p)
+    except Exception:
+        pass
