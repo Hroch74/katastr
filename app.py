@@ -3,6 +3,8 @@ import tempfile
 import os
 import re
 import pypdf
+import zlib
+import struct
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -176,100 +178,88 @@ class ParcelCheckAnalyzer:
         return checks
 
 
-# --- Čisté vektorové SVG vykreslení parcelace (bez nutnosti instalovat matplotlib) ---
-def render_parcelation_svg(area_total, net_area, num_plots, road_width, has_turn):
-    svg_w = 850
-    svg_h = 380
-    margin = 25
+# --- 100% spolehlivý vestavěný generátor PNG schématu (čistý Python) ---
+def create_parcelation_png(width=800, height=320, num_plots=3, road_w=8.0, has_turn=True):
+    # Inicializace plátna (RGB)
+    canvas = [[(15, 23, 42) for _ in range(width)] for _ in range(height)]
 
-    w_inner = svg_w - (2 * margin)
-    h_inner = svg_h - (2 * margin)
+    def draw_rect(x1, y1, x2, y2, color):
+        for y in range(max(0, y1), min(height, y2)):
+            for x in range(max(0, x1), min(width, x2)):
+                canvas[y][x] = color
 
-    r_h_px = max(26, int(h_inner * (road_width / 25.0)))
-    r_y_px = margin + int((h_inner - r_h_px) / 2.0)
+    def draw_border(x1, y1, x2, y2, color, thickness=2):
+        for t in range(thickness):
+            for x in range(x1, x2):
+                if 0 <= y1 + t < height: canvas[y1 + t][x] = color
+                if 0 <= y2 - 1 - t < height: canvas[y2 - 1 - t][x] = color
+            for y in range(y1, y2):
+                if 0 <= x1 + t < width: canvas[y][x1 + t] = color
+                if 0 <= x2 - 1 - t < width: canvas[y][x2 - 1 - t] = color
 
-    svg_parts = [
-        f'<svg width="100%" height="{svg_h}" viewBox="0 0 {svg_w} {svg_h}" '
-        f'xmlns="http://www.w3.org/2000/svg" style="background:#0F172A; border-radius:8px;">',
-        f'<rect x="{margin}" y="{margin}" width="{w_inner}" height="{h_inner}" '
-        f'fill="#1E293B" stroke="#38BDF8" stroke-width="2"/>'
-    ]
+    m = 20
+    w_inner = width - 2 * m
+    h_inner = height - 2 * m
+    draw_rect(m, m, width - m, height - m, (30, 41, 59))
+    draw_border(m, m, width - m, height - m, (56, 189, 248), 2)
 
     # Koridor silnice
-    svg_parts.append(
-        f'<rect x="{margin}" y="{r_y_px}" width="{w_inner}" height="{r_h_px}" '
-        f'fill="#475569" stroke="#64748B" stroke-width="1.5"/>'
-    )
-    svg_parts.append(
-        f'<text x="{margin + 20}" y="{r_y_px + int(r_h_px/2) + 4}" fill="#F1F5F9" '
-        f'font-family="sans-serif" font-size="11" font-weight="bold">'
-        f'Páteřní komunikace (šířka {road_width} m)</text>'
-    )
+    r_h = 44 if road_w == 8.0 else 36
+    r_y1 = (height - r_h) // 2
+    r_y2 = r_y1 + r_h
+    draw_rect(m, r_y1, width - m, r_y2, (71, 85, 105))
+    draw_border(m, r_y1, width - m, r_y2, (148, 163, 184), 1)
 
     # Točna IZS
     if has_turn:
-        turn_w = 46
-        turn_h = min(h_inner - 10, r_h_px + 36)
-        turn_x = margin + w_inner - turn_w - 4
-        turn_y = margin + int((h_inner - turn_h) / 2.0)
-        svg_parts.append(
-            f'<rect x="{turn_x}" y="{turn_y}" width="{turn_w}" height="{turn_h}" '
-            f'fill="#EF4444" fill-opacity="0.25" stroke="#EF4444" stroke-width="1.5" stroke-dasharray="4"/>'
-        )
-        svg_parts.append(
-            f'<text x="{turn_x + int(turn_w/2)}" y="{turn_y + int(turn_h/2) + 3}" fill="#FCA5A5" '
-            f'font-family="sans-serif" font-size="9" font-weight="bold" text-anchor="middle">IZS</text>'
-        )
+        t_w = 60
+        t_h = r_h + 40
+        t_y1 = (height - t_h) // 2
+        t_x1 = width - m - t_w - 5
+        draw_rect(t_x1, t_y1, t_x1 + t_w, t_y1 + t_h, (185, 28, 28))
+        draw_border(t_x1, t_y1, t_x1 + t_w, t_y1 + t_h, (239, 68, 68), 2)
 
-    # Rozdělení na parcely (Sever / Jih)
+    # Dělení parcel (sever a jih)
     if num_plots > 0:
-        plots_north = (num_plots + 1) // 2
-        plots_south = num_plots // 2
-        p_area = net_area / num_plots
+        n_north = (num_plots + 1) // 2
+        n_south = num_plots // 2
+        
+        # Severní parcely
+        dx_n = w_inner // max(1, n_north)
+        for i in range(n_north):
+            x1 = m + i * dx_n
+            x2 = x1 + dx_n
+            draw_rect(x1 + 3, m + 3, x2 - 3, r_y1 - 3, (16, 185, 129))
+            draw_border(x1 + 3, m + 3, x2 - 3, r_y1 - 3, (110, 231, 183), 1)
 
-        # Severní pás
-        north_h = r_y_px - margin
-        pw_north = w_inner / max(1, plots_north)
-        plot_idx = 1
-        for i in range(plots_north):
-            px = margin + (i * pw_north)
-            svg_parts.append(
-                f'<rect x="{px}" y="{margin}" width="{pw_north}" height="{north_h}" '
-                f'fill="#10B981" fill-opacity="0.15" stroke="#10B981" stroke-width="1"/>'
-            )
-            svg_parts.append(
-                f'<text x="{px + pw_north/2}" y="{margin + north_h/2 - 4}" fill="#6EE7B7" '
-                f'font-family="sans-serif" font-size="11" font-weight="bold" text-anchor="middle">P{plot_idx}</text>'
-            )
-            svg_parts.append(
-                f'<text x="{px + pw_north/2}" y="{margin + north_h/2 + 12}" fill="#A7F3D0" '
-                f'font-family="sans-serif" font-size="9" text-anchor="middle">{p_area:.0f} m²</text>'
-            )
-            plot_idx += 1
+        # Jižní parcely
+        if n_south > 0:
+            dx_s = w_inner // n_south
+            for i in range(n_south):
+                x1 = m + i * dx_s
+                x2 = x1 + dx_s
+                draw_rect(x1 + 3, r_y2 + 3, x2 - 3, height - m - 3, (59, 130, 246))
+                draw_border(x1 + 3, r_y2 + 3, x2 - 3, height - m - 3, (147, 197, 253), 1)
 
-        # Jižní pás
-        south_y = r_y_px + r_h_px
-        south_h = (margin + h_inner) - south_y
-        if plots_south > 0:
-            pw_south = w_inner / plots_south
-            for i in range(plots_south):
-                px = margin + (i * pw_south)
-                svg_parts.append(
-                    f'<rect x="{px}" y="{south_y}" width="{pw_south}" height="{south_h}" '
-                    f'fill="#3B82F6" fill-opacity="0.15" stroke="#3B82F6" stroke-width="1"/>'
-                )
-                svg_parts.append(
-                    f'<text x="{px + pw_south/2}" y="{south_y + south_h/2 - 4}" fill="#93C5FD" '
-                    f'font-family="sans-serif" font-size="11" font-weight="bold" text-anchor="middle">P{plot_idx}</text>'
-                )
-                svg_parts.append(
-                    f'<text x="{px + pw_south/2}" y="{south_y + south_h/2 + 12}" fill="#BFDBFE" '
-                    f'font-family="sans-serif" font-size="9" text-anchor="middle">{p_area:.0f} m²</text>'
-                )
-                plot_idx += 1
+    # Zakódování do čistého PNG
+    raw_data = bytearray()
+    for row in canvas:
+        raw_data.append(0)
+        for r, g, b in row:
+            raw_data.extend((r, g, b))
 
-    svg_parts.append('</svg>')
-    return "".join(svg_parts)
+    def make_chunk(chunk_type, data):
+        c = chunk_type + data
+        return struct.pack('>I', len(data)) + c + struct.pack('>I', zlib.crc32(c) & 0xffffffff)
+
+    ihdr = struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0)
+    png_bytes = (
+        b'\x89PNG\r\n\x1a\n' +
+        make_chunk(b'IHDR', ihdr) +
+        make_chunk(b'IDAT', zlib.compress(bytes(raw_data), 6)) +
+        make_chunk(b'IEND', b'')
+    )
+    return bytes(png_bytes)
 
 
 def generate_pdf(analyzer, out_pdf, up, prices):
@@ -469,4 +459,74 @@ if uploaded_file is not None:
         b3.metric("Čistá plocha parcel", f"{net_m2:.0f} m²")
         b4.metric("Počet parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
 
-        # --- Vektorový
+        # --- Vizuální schéma parcelace (čisté vestavěné PNG bez závislostí) ---
+        st.divider()
+        st.markdown("#### 🗺️ Vizuální situační schéma parcelace")
+        st.caption("Páteřní komunikace (šedá), točna hasičů IZS (červená), navržené stavební parcely (zelená / modrá).")
+        png_data = create_parcelation_png(
+            width=800, height=300, num_plots=n_plots, road_w=r_w, has_turn=has_turn
+        )
+        st.image(png_data, use_container_width=True)
+
+        st.divider()
+        st.markdown("#### 🛠️ Položkový rozpočet infrastruktury")
+        unit_road = 14000.0 if r_w == 8.0 else 11000.0
+        cost_road = r_len * unit_road
+        cost_pave = r_len * 4000.0 if r_w == 8.0 else 0.0
+        cost_water = r_len * 4200.0
+        cost_sewer = r_len * 7500.0
+        cost_rain = r_len * 5000.0
+        cost_elec = r_len * 3200.0
+        n_lamps = max(2, int(r_len // 30) + 1)
+        cost_light = n_lamps * 45000.0
+        cost_conn = n_plots * 110000.0
+        cost_turn = turn_m2 * 1800.0 if has_turn else 0.0
+        cost_zpf = r_m2 * 250.0
+        cost_legal = 120000.0 if has_contract else 0.0
+        cost_contrib = n_plots * contrib if has_contract else 0.0
+
+        tot_capex = (
+            cost_road + cost_pave + cost_water + cost_sewer + cost_rain +
+            cost_elec + cost_light + cost_conn + cost_turn + cost_zpf +
+            cost_legal + cost_contrib
+        )
+
+        tbl = [
+            {"Položka infrastruktury": f"Komunikace ({r_len:.0f} bm, šířka {r_w} m)", "Orientační náklad": f"{cost_road:,.0f} Kč"},
+            {"Položka infrastruktury": "Chodník 1,5 m", "Orientační náklad": f"{cost_pave:,.0f} Kč"},
+            {"Položka infrastruktury": "Obratiště IZS (točna)", "Orientační náklad": f"{cost_turn:,.0f} Kč"},
+            {"Položka infrastruktury": "Vodovodní řad PE-HD", "Orientační náklad": f"{cost_water:,.0f} Kč"},
+            {"Položka infrastruktury": "Splašková kanalizace", "Orientační náklad": f"{cost_sewer:,.0f} Kč"},
+            {"Položka infrastruktury": "Dešťová retence ulice", "Orientační náklad": f"{cost_rain:,.0f} Kč"},
+            {"Položka infrastruktury": "Elektro NN (kabelizace)", "Orientační náklad": f"{cost_elec:,.0f} Kč"},
+            {"Položka infrastruktury": f"Veřejné osvětlení ({n_lamps} lamp)", "Orientační náklad": f"{cost_light:,.0f} Kč"},
+            {"Položka infrastruktury": f"Přípojky pro {n_plots} parcel", "Orientační náklad": f"{cost_conn:,.0f} Kč"},
+            {"Položka infrastruktury": "Odnětí silnice ze ZPF", "Orientační náklad": f"{cost_zpf:,.0f} Kč"}
+        ]
+        if has_contract:
+            tbl.append({"Položka infrastruktury": "Právní servis plánovací smlouvy", "Orientační náklad": f"{cost_legal:,.0f} Kč"})
+            tbl.append({"Položka infrastruktury": f"Příspěvek obci ({n_plots} parcel)", "Orientační náklad": f"{cost_contrib:,.0f} Kč"})
+
+        st.table(tbl)
+        k1, k2 = st.columns(2)
+        k1.metric("Celkové náklady sítí", f"{tot_capex:,.0f} Kč".replace(',', ' '))
+        cpp = (tot_capex / n_plots) if n_plots > 0 else 0.0
+        k2.metric("Náklad na 1 parcelu", f"{cpp:,.0f} Kč".replace(',', ' '))
+
+        st.divider()
+        raw_c = area_total * buy_p
+        rev_c = net_m2 * sell_p
+        prof_c = rev_c - raw_c - tot_capex
+        mar_c = (prof_c / rev_c * 100.0) if rev_c > 0 else 0.0
+
+        r1, r2, r3, r4 = st.columns(4)
+        r1.metric("Nákup pozemku", f"{raw_c:,.0f} Kč".replace(',', ' '))
+        r2.metric("Tržby z parcel", f"{rev_c:,.0f} Kč".replace(',', ' '))
+        r3.metric("Hrubý zisk", f"{prof_c:,.0f} Kč".replace(',', ' '))
+        r4.metric("Marže projektu", f"{mar_c:.1f} %")
+
+    try:
+        os.remove(tmp_p)
+        os.remove(tmp_pdf_p)
+    except Exception:
+        pass
