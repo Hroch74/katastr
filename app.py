@@ -52,21 +52,13 @@ def setup_czech_fonts():
 FONT_MAIN, FONT_BOLD, FONT_OBLIQUE = setup_czech_fonts()
 
 
-# --- Modul: Automatické zjištění zóny Územního plánu ---
 def fetch_zoning_info(cadastral_area, parcel_no):
-    """
-    Pokusí se dotázat veřejných geoportálů a mapových služeb územního plánování.
-    Pokud služba v danou chvíli neodpoví nebo obec ještě nemá digitální GIS vrstvu,
-    využije kontextuální pravidla pro známá k.ú. a druhy pozemků.
-    """
     clean_area = cadastral_area.strip()
     clean_parcel = parcel_no.strip()
 
-    # Zvláštní pravidla a známé komerční lokality
-    # Parcela 877/2 Tehovec leží v průmyslovém / komerčním pásu podél Kutnohorské
     if "Tehovec" in clean_area and "877" in clean_parcel:
         return {
-            "source": "Územní plán obce Tehovec (digitální vrstva GIS)",
+            "source": "Územní plán obce Tehovec (vrstva GIS)",
             "zone_code": "VD",
             "zone_title": "VD / OM — Plochy drobné výroby, skladů a komerce",
             "is_commercial": True,
@@ -76,18 +68,6 @@ def fetch_zoning_info(cadastral_area, parcel_no):
             "note": "ZÁKAZ STAVBY RODINNÝCH DOMŮ. Povolena nerušící komerce, administrativa, sklady a lehká výroba."
         }
 
-    # Standardní online dotaz na geokodér RÚIAN / NGÚP WFS
-    try:
-        url = f"https://vdp.cuzk.cz/vdp/ruian/parcely/vyhledej"
-        # Volání prostorového bodu z otevřených mapových služeb
-        resp = requests.get(
-            "https://geoportal.gov.cz/ArcGIS/rest/services",
-            timeout=2.0
-        )
-    except Exception:
-        pass
-
-    # Výchozí konzervativní obytná zóna pro běžné parcely
     return {
         "source": "Územní plán obce (standardní regulativ zastavitelného území)",
         "zone_code": "BI",
@@ -202,12 +182,21 @@ class ParcelCheckAnalyzer:
                 "detail": f"Celá plocha {area:.0f} m² je v ZPF. Pro stavbu je nutné vyjmout zastavěnou a zpevněnou plochu (cca {max_footprint:.0f} m²)."
             })
 
-        checks.append({
-            "category": "Sítě a dopravní infrastruktura",
-            "status": "PASS",
-            "title": "Dopravní napojení a technické sítě",
-            "detail": f"Dopravní napojení: {up_params.get('road', 'Sjezd z přilehlé komunikace')}\nSítě: {up_params.get('infrastructure', 'Elektro, voda, dešťová retence')}."
-        })
+        nets_verified = up_params.get("nets_verified", False)
+        if not nets_verified:
+            checks.append({
+                "category": "Inženýrské sítě (DTM)",
+                "status": "WARNING",
+                "title": "Inženýrské sítě nejsou na pozemku ověřeny (nejsou součástí KN)",
+                "detail": "Katastr nemovitostí sítě neeviduje. Na pozemku není garantováno žádné napojení na vodu, kanalizaci ani elektro. RIZIKO: Nutno podat žádost o vyjádření k existenci sítí a prověřit kapacitu přípojek a náklady na zasíťování."
+            })
+        else:
+            checks.append({
+                "category": "Inženýrské sítě (DTM)",
+                "status": "PASS",
+                "title": "Sítě a dopravní napojení uživatelsky potvrzeny",
+                "detail": f"Dopravní napojení: {up_params.get('road', 'Sjezd z přilehlé komunikace')}\nSítě: {up_params.get('infrastructure', 'Dle technické dokumentace')}."
+            })
 
         return checks
 
@@ -285,7 +274,7 @@ def generate_pdf_report(analyzer, output_pdf, up_params=None):
         [Paragraph("Funkční zóna ÚP", body_style), Paragraph(up_params.get('zone_type', 'VD / OM'), body_style), Paragraph("Komerční areál / sklady / výroba (ZÁKAZ RD)", body_style) if is_comm else Paragraph("1 samostatný rodinný dům", body_style)],
         [Paragraph("Max. koeficient zastavění (KZP)", body_style), Paragraph(f"max. {cov_pct:.0f} %", body_style), Paragraph(f"<b>max. {max_cov:.1f} m²</b> zastavěné plochy", body_style)],
         [Paragraph("Min. podíl zeleně (KZ)", body_style), Paragraph(f"min. {green_pct:.0f} %", body_style), Paragraph(f"<b>min. {min_green:.1f} m²</b> vsakovací / izolační zeleně", body_style)],
-        [Paragraph("Výškový limit stavby", body_style), Paragraph(up_params.get('max_floors', 'max. 10 m'), body_style), Paragraph("Dle požadavků technologie / skladové haly", body_style)],
+        [Paragraph("Výškový limit stavby", body_style), Paragraph(up_params.get('max_floors', 'max. 10 m'), body_style), Paragraph("Dle požadavků technologie / areálu", body_style)],
     ]
     t_dev = Table(dev_data, colWidths=[6.0*cm, 6.0*cm, 6.0*cm])
     t_dev.setStyle(TableStyle([
@@ -299,14 +288,22 @@ def generate_pdf_report(analyzer, output_pdf, up_params=None):
     story.append(Spacer(1, 8))
 
     story.append(Paragraph("2. Inženýrské sítě a technická infrastruktura (DTM)", h2_style))
+    nets_verified = up_params.get("nets_verified", False)
+    if nets_verified:
+        net_status_text = "Potvrzeno v dosahu"
+        net_condition = "Dle projektové dokumentace"
+    else:
+        net_status_text = "NEOVĚŘENO (Není v KN)"
+        net_condition = "Nutno podat žádost o vyjádření k existenci sítí"
+
     net_data = [
-        [Paragraph("<b>Infrastruktura</b>", body_style), Paragraph("<b>Dostupnost & Umístění řadu</b>", body_style), Paragraph("<b>Podmínka pro záměr</b>", body_style)],
-        [Paragraph("Elektro (NN / VN)", body_style), Paragraph("V přilehlém uličním profilu", body_style), Paragraph("Rezervace dostatečného příkonu", body_style)],
-        [Paragraph("Vodovod", body_style), Paragraph("Obecní řad DN v komunikaci", body_style), Paragraph("Vodovoměrná šachta / požární kapacita", body_style)],
-        [Paragraph("Kanalizace", body_style), Paragraph("Splašková stoka v dosahu", body_style), Paragraph("Revizní šachta / lapač dle provozu", body_style)],
-        [Paragraph("Dešťové vody", body_style), Paragraph("Retenční nádrž na pozemku s regulovaným odtokem", body_style), Paragraph("Vsakování velkých ploch střech a parkoviště", body_style)],
+        [Paragraph("<b>Infrastruktura</b>", body_style), Paragraph("<b>Evidovaný stav</b>", body_style), Paragraph("<b>Doporučený postup</b>", body_style)],
+        [Paragraph("Elektro (NN / VN)", body_style), Paragraph(net_status_text, body_style), Paragraph(net_condition, body_style)],
+        [Paragraph("Vodovod", body_style), Paragraph(net_status_text, body_style), Paragraph(net_condition, body_style)],
+        [Paragraph("Kanalizace", body_style), Paragraph(net_status_text, body_style), Paragraph(net_condition, body_style)],
+        [Paragraph("Dešťové vody", body_style), Paragraph("Řešení na pozemku", body_style), Paragraph("Vsakování / retenční nádrž dle hydrogeologie", body_style)],
     ]
-    t_net = Table(net_data, colWidths=[4.0*cm, 7.5*cm, 6.5*cm])
+    t_net = Table(net_data, colWidths=[4.0*cm, 6.5*cm, 7.5*cm])
     t_net.setStyle(TableStyle([
         ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#F1F5F9')),
         ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
@@ -356,99 +353,21 @@ def generate_pdf_report(analyzer, output_pdf, up_params=None):
 
 # ==================== STREAMLIT ROZHRANÍ ====================
 st.set_page_config(
-    page_title="ParcelCheck AI — Developerský audit pozemků",
+    page_title="ParcelCheck AI — Developerský audit a parcelace",
     page_icon="🏗️",
     layout="wide"
 )
 
-st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
-st.caption("Automatická detekce plomb (změn právního vztahu), zón územního plánu a sítí")
+st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský kalkulátor")
+st.caption("Nezávislá prověrka katastrálních rizik, územního plánu, sítí a investiční parcelace")
+
+# Boční panel pro upřesnění stavu
+with st.sidebar:
+    st.header("⚙️ Stav prověření pozemku")
+    nets_manually_confirmed = st.checkbox("Mám ověřeno fyzické napojení na sítě v komunikaci", value=False)
+    st.caption("Pokud není zaškrtnuto, systém striktně uvádí sítě jako neověřené riziko.")
 
 uploaded_file = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN nebo Listu vlastnictví", type=["pdf"])
 
 if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
-
-    reader = pypdf.PdfReader(tmp_path)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() or ""
-
-    analyzer = ParcelCheckAnalyzer(text)
-    d = analyzer.data
-
-    # Automatické dohledání zóny v územním plánu podle k.ú. a čísla parcely
-    auto_up = fetch_zoning_info(d["cadastral_area"], d["parcel_no"])
-    is_commercial = auto_up["is_commercial"]
-
-    # Výstraha při plombě
-    if d.get("has_plomba", False):
-        st.error(f"🚨 **KRITICKÉ UPOZORNĚNÍ: OBJEKT JE DOTČEN ZMĚNOU PRÁVNÍHO VZTAHU! ({d['plomba_id']})**\n\nNa nemovitosti právě probíhá vkladové řízení na katastru. Může jít o právě podaný prodej třetí osobě, exekuci nebo zástavní právo banky. **ZÁKAZ PODPISU A PLATBY: Nutno nahlédnout do spisu na katastru!**")
-    else:
-        st.success(f"Úspěšně načtena parcela č. **{d['parcel_no']}**, k.ú. **{d['cadastral_area']}** (obec {d['municipality']}) — bez evidované plomby.")
-
-    # Informační panel o automaticky zjištěném Územním plánu
-    if is_commercial:
-        st.warning(f"📍 **Územní plán (automaticky detekováno):** {auto_up['zone_title']}\n\n⚠️ **{auto_up['note']}**")
-    else:
-        st.info(f"📍 **Územní plán (automaticky detekováno):** {auto_up['zone_title']}\n\n✅ {auto_up['note']}")
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("Výměra pozemku", f"{d['area_m2']} m²")
-    with col2:
-        area_num = float(d['area_m2']) if d['area_m2'].isdigit() else 1000.0
-        cov_pct = auto_up['max_coverage_pct']
-        st.metric("Max. zastavěnost plochy", f"{(area_num * cov_pct / 100):.1f} m²", f"{cov_pct:.0f} %")
-    with col3:
-        green_pct = auto_up['min_greenery_pct']
-        st.metric("Min. zeleň / vsak", f"{(area_num * green_pct / 100):.1f} m²", f"{green_pct:.0f} %")
-    with col4:
-        st.metric("Právní stav", "POZOR: Plomba / Omezení" if (d.get("has_plomba", False) or not d['limitations']) else "V pořádku")
-
-    up_params = {
-        "is_commercial": is_commercial,
-        "zone_type": auto_up["zone_title"],
-        "max_coverage_pct": float(auto_up["max_coverage_pct"]),
-        "min_greenery_pct": float(auto_up["min_greenery_pct"]),
-        "max_floors": auto_up["max_floors"],
-        "road": "Přímé napojení na komunikaci (sjezd)",
-        "infrastructure": "Elektro NN/VN, obecní voda, dešťová retence na pozemku"
-    }
-
-    st.subheader("📋 Developerský rozbor a semafor rizik")
-    checks = analyzer.evaluate_developer_rules(up_params)
-    for c in checks:
-        if c["status"] == "DANGER":
-            st.error(f"**[{c['category']}] {c['title']}**\n\n{c['detail']}")
-        elif c["status"] == "WARNING":
-            st.warning(f"**[{c['category']}] {c['title']}**\n\n{c['detail']}")
-        elif c["status"] == "PASS":
-            st.success(f"**[{c['category']}] {c['title']}**\n\n{c['detail']}")
-        else:
-            st.info(f"**[{c['category']}] {c['title']}**\n\n{c['detail']}")
-
-    out_pdf_name = f"Audit_{d['municipality']}_{d['parcel_no'].replace('/', '_')}.pdf"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_out:
-        out_pdf_path = tmp_out.name
-
-    generate_pdf_report(analyzer, out_pdf_path, up_params)
-
-    with open(out_pdf_path, "rb") as f:
-        pdf_bytes = f.read()
-
-    st.download_button(
-        label="📄 Stáhnout kompletní Manažerský PDF Audit",
-        data=pdf_bytes,
-        file_name=out_pdf_name,
-        mime="application/pdf",
-        type="primary"
-    )
-
-    try:
-        os.remove(tmp_path)
-        os.remove(out_pdf_path)
-    except Exception:
-        pass
+    with tempfile
