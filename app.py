@@ -23,11 +23,11 @@ class Analyzer:
         m = re.search(pat, self.raw)
         return m.group(1).strip() if m else ""
 
-input_mode = st.radio("Způsob zadání:", ["📄 Nahrát PDF z KN", "✍️ Zadat ručně"], horizontal=True)
+input_mode = st.radio("Způsob zadání:", ["📄 Nahrát PDF z Nahlížení do KN (načte výměru samo)", "✍️ Zadat ručně"], horizontal=True)
 
 parcel_data = None
 
-if input_mode == "📄 Nahrát PDF z KN":
+if input_mode == "📄 Nahrát PDF z Nahlížení do KN (načte výměru samo)":
     up_pdf = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN", type=["pdf"])
     if up_pdf is not None:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -45,9 +45,9 @@ if input_mode == "📄 Nahrát PDF z KN":
 else:
     with st.form("f_manual"):
         c1, c2, c3 = st.columns(3)
-        p_num = c1.text_input("Parcelní číslo", placeholder="např. 841/4", value="")
-        p_ku = c2.text_input("Obec nebo k.ú.", placeholder="např. Kozojedy", value="")
-        p_area = c3.number_input("Výměra m² (pokud znáte)", min_value=0, max_value=10000000, value=0, step=50)
+        p_num = c1.text_input("Parcelní číslo", placeholder="např. 841/4")
+        p_ku = c2.text_input("Obec nebo katastrální území", placeholder="např. Kozojedy")
+        p_area = c3.number_input("Výměra v m² (pokud ji znáte z hlavy)", min_value=0, max_value=10000000, value=0, step=50)
         
         if st.form_submit_button("Prověřit pozemek", type="primary"):
             if p_num.strip() and p_ku.strip():
@@ -77,27 +77,28 @@ if parcel_data:
     c_m1, c_m2, c_m3, c_m4 = st.columns(4)
     c_m1.metric("Parcela", p_num)
     c_m2.metric("Území / Obec", p_ku)
-    c_m3.metric("Výměra", f"{area_val:,.0f} m²".replace(',', ' ') if area_val > 0 else "Nezadáno (0 m²)")
+    c_m3.metric("Výměra dle KN", f"{area_val:,.0f} m²".replace(',', ' ') if area_val > 0 else "Čeká na zadání")
     c_m4.metric("Druh v KN", p_type)
 
     if parcel_data.get("has_plomba"):
         st.error("POZOR PLOMBA: " + str(parcel_data.get("plomba_id")))
 
-    # Odkazová lišta
+    # Přímé odkazy na ČÚZK, Mapy.cz a Ikarus21
     q_mapy = urllib.parse.quote(f"{p_num} {p_ku}")
     url_m = f"https://mapy.cz/zakladni?q={q_mapy}&z=17"
     url_c = "https://nahlizenidokn.cuzk.cz/"
     url_ik = "https://www.ikarus21.cz/"
     
     b1, b2, b3 = st.columns(3)
-    b1.link_button("🌐 Mapy.cz (Katastr)", url_m, use_container_width=True)
-    b2.link_button("📜 Nahlížení ČÚZK", url_c, use_container_width=True)
+    b1.link_button("🌐 Otevřít na Mapy.cz (Katastr)", url_m, use_container_width=True)
+    b2.link_button("📜 Zjistit výměru na Nahlížení ČÚZK", url_c, use_container_width=True)
     b3.link_button("📊 Ikarus21 (Cenové mapy)", url_ik, use_container_width=True)
 
     is_field = any(w in p_type.lower() for w in ["orná", "pole", "les", "travní", "zahrada"])
-    z_type = st.radio("Status v Územním plánu:", ["Nestavební (pole/les/NZ)", "Zastavitelná plocha (RD)"], index=0 if is_field else 1)
+    z_type = st.radio("Status v Územním plánu obce:", ["Nestavební (pole/les/NZ)", "Zastavitelná plocha (RD)"], index=0 if is_field else 1)
     is_buildable = (z_type == "Zastavitelná plocha (RD)")
 
+    # Katastrální mapa pro zadanou obec
     st.subheader(f"Katastrální mapa ČÚZK: {p_ku}")
     m_code = f"""
     <!DOCTYPE html><html><head>
@@ -120,14 +121,18 @@ if parcel_data:
     """
     components.html(m_code, height=500)
 
-    # Pokud výměra není zadána, nabídneme její zadání přímo sem
+    # Pokud výměra není známá, nevyhodnocujeme žádné vymyšlené rozměry
     if area_val <= 0:
-        st.info("💡 Výměra zatím nebyla zadána. Zadejte skutečnou výměru v m² níže pro výpočet ocenění / parcelace:")
-        area_val = st.number_input("Skutečná výměra pozemku (m²)", min_value=100, max_value=10000000, value=1000, step=100, key=f"area_override_{p_num}_{p_ku}")
+        st.warning(f"⚠️ Výměra parcely č. {p_num} není zadána. Klikněte na tlačítko ČÚZK výše, opište zjištěnou výměru a zadejte ji sem:")
+        area_input = st.number_input("Zadejte zjištěnou výměru v m²:", min_value=0, max_value=10000000, value=0, step=50, key=f"inp_{p_num}_{p_ku}")
+        if area_input > 0:
+            area_val = float(area_input)
+            st.rerun()
 
-    if not is_buildable:
-        st.error(f"Pozemek {p_num} je nestavební orná půda / pole. Zákaz výstavby RD.")
-        if area_val > 0:
+    # Teprve se známou výměrou počítáme ekonomiku
+    if area_val > 0:
+        if not is_buildable:
+            st.error(f"🛑 Pozemek {p_num} je nestavební orná půda / pole ({area_val:,.0f} m²). Zákaz výstavby RD.")
             cp1, cp2 = st.columns(2)
             p_agr = cp1.number_input("Cena orné půdy dle Ikarusu (Kč/m²)", value=60, step=5)
             p_spec = cp2.number_input("Spekulativní cena s výhledem ÚP (Kč/m²)", value=450, step=25)
@@ -135,9 +140,8 @@ if parcel_data:
             a1, a2 = st.columns(2)
             a1.metric(f"Zemědělská hodnota ({p_agr} Kč/m²)", f"{area_val * p_agr:,.0f} Kč".replace(',', ' '))
             a2.metric("Rozvojová hodnota", f"{area_val * p_spec:,.0f} Kč".replace(',', ' '))
-    else:
-        st.success(f"Zastavitelná plocha: Parcela {p_num} určena k zástavbě RD.")
-        if area_val > 0:
+        else:
+            st.success(f"🏡 Zastavitelná plocha: Parcela {p_num} ({area_val:,.0f} m²) je určena k zástavbě RD.")
             pc1, pc2 = st.columns(2)
             with pc1:
                 t_plot = st.number_input("Cílová výměra 1 parcely (m²)", value=800, step=50)
