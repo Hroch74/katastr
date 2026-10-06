@@ -12,44 +12,49 @@ from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
-# --- Zajištění fontu s plnou podporou české diakritiky (Windows i Linux Cloud) ---
+# --- Zajištění fontu s plnou podporou české diakritiky ---
 def setup_czech_fonts():
-    font_main = 'Helvetica'
-    font_bold = 'Helvetica-Bold'
-    font_oblique = 'Helvetica-Oblique'
-
-    candidates = [
-        ('C:\\Windows\\Fonts\\arial.ttf', 'C:\\Windows\\Fonts\\arialbd.ttf', 'C:\\Windows\\Fonts\\ariali.ttf'),
-        ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'),
-        ('/usr/share/fonts/TTF/DejaVuSans.ttf', '/usr/share/fonts/TTF/DejaVuSans-Bold.ttf', '/usr/share/fonts/TTF/DejaVuSans-Oblique.ttf')
+    # 1. Zkouška známých cest k DejaVu a Arialu
+    system_paths = [
+        # Linux (Streamlit Cloud po instalaci fonts-dejavu-core)
+        ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+         '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'),
+        # Windows
+        ('C:\\Windows\\Fonts\\arial.ttf',
+         'C:\\Windows\\Fonts\\arialbd.ttf',
+         'C:\\Windows\\Fonts\\ariali.ttf')
     ]
-    for regular, bold, oblique in candidates:
-        if os.path.exists(regular):
+
+    for reg, bld, obl in system_paths:
+        if os.path.exists(reg):
             try:
-                pdfmetrics.registerFont(TTFont('AppFont', regular))
-                pdfmetrics.registerFont(TTFont('AppFont-Bold', bold if os.path.exists(bold) else regular))
-                pdfmetrics.registerFont(TTFont('AppFont-Oblique', oblique if os.path.exists(oblique) else regular))
+                pdfmetrics.registerFont(TTFont('AppFont', reg))
+                pdfmetrics.registerFont(TTFont('AppFont-Bold', bld if os.path.exists(bld) else reg))
+                pdfmetrics.registerFont(TTFont('AppFont-Oblique', obl if os.path.exists(obl) else reg))
                 return 'AppFont', 'AppFont-Bold', 'AppFont-Oblique'
             except Exception:
                 pass
 
+    # 2. Záložní přímé stažení fontu FreeSans s plnou podporou UTF-8
     cache_dir = tempfile.gettempdir()
-    reg_path = os.path.join(cache_dir, "DejaVuSans.ttf")
-    bold_path = os.path.join(cache_dir, "DejaVuSans-Bold.ttf")
+    reg_path = os.path.join(cache_dir, "FreeSans.ttf")
+    bold_path = os.path.join(cache_dir, "FreeSansBold.ttf")
     try:
         if not os.path.exists(reg_path):
-            urllib.request.urlretrieve("https://github.com/dejavu-fonts/dejavu-fonts/raw/master/resources/DejaVuSans.ttf", reg_path)
+            urllib.request.urlretrieve("https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/resources/DejaVuSans.ttf", reg_path)
         if not os.path.exists(bold_path):
-            urllib.request.urlretrieve("https://github.com/dejavu-fonts/dejavu-fonts/raw/master/resources/DejaVuSans-Bold.ttf", bold_path)
+            urllib.request.urlretrieve("https://raw.githubusercontent.com/dejavu-fonts/dejavu-fonts/master/resources/DejaVuSans-Bold.ttf", bold_path)
 
         pdfmetrics.registerFont(TTFont('AppFont', reg_path))
         pdfmetrics.registerFont(TTFont('AppFont-Bold', bold_path))
         pdfmetrics.registerFont(TTFont('AppFont-Oblique', reg_path))
-        return 'AppFont', 'AppFont-Bold', 'AppFont-Oblique'
+        return 'AppFont', 'AppFont-Bold', 'AppFont'
     except Exception:
-        return font_main, font_bold, font_oblique
+        return 'Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique'
 
 FONT_MAIN, FONT_BOLD, FONT_OBLIQUE = setup_czech_fonts()
+
 
 class ParcelCheckAnalyzer:
     def __init__(self, raw_text):
