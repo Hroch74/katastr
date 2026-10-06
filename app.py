@@ -3,9 +3,22 @@ import tempfile
 import os
 import re
 import pypdf
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import matplotlib.patches as patches
+
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    HRFlowable,
+    Image as ReportLabImage
+)
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
@@ -31,7 +44,9 @@ FONT_MAIN, FONT_BOLD = setup_czech_fonts()
 def get_benchmark_prices(municipality, cadastral_area):
     m = str(municipality).lower()
     c = str(cadastral_area).lower()
-    if any(k in m or k in c for k in ["tehovec", "říčany", "ricany", "mukařov", "babice"]):
+    if any(k in m or k in c for k in [
+        "tehovec", "říčany", "ricany", "mukařov", "babice"
+    ]):
         return {
             "region": "Praha-východ (příměstský trh)",
             "raw_avg": 3500, "serviced_avg": 9500, "comm_avg": 4800,
@@ -69,7 +84,10 @@ class ParcelCheckAnalyzer:
         self.data = self._parse()
 
     def _parse(self):
-        pm = re.search(r"Objekt je dotčen změnou právního vztahu:\s*([^;\n\r]+)", self.raw)
+        pm = re.search(
+            r"Objekt je dotčen změnou právního vztahu:\s*([^;\n\r]+)",
+            self.raw
+        )
         data = {
             "parcel_no": self._ex(r"Parcelní číslo:\s*([0-9]+(?:/[0-9]+)?)"),
             "municipality": self._ex(r"Obec:\s*([^\n\r\[]+)"),
@@ -162,41 +180,174 @@ class ParcelCheckAnalyzer:
 
         return checks
 
-def generate_pdf(analyzer, out_pdf, up, prices):
+
+# --- Vykreslení situace parcelace ---
+def render_parcelation_plot(area_total, net_area, num_plots, road_width, road_len, has_turn):
+    fig, ax = plt.subplots(figsize=(10, 5))
+    
+    # Geometrické proporce areálu
+    aspect_ratio = 1.8
+    total_w = (area_total * aspect_ratio) ** 0.5
+    total_h = area_total / total_w
+
+    # Obrys celkového pozemku
+    outer_box = patches.Rectangle(
+        (0, 0), total_w, total_h,
+        linewidth=2, edgecolor='#1F4E79', facecolor='#F8FAFC'
+    )
+    ax.add_patch(outer_box)
+
+    # Koridor páteřní komunikace středem pozemku
+    road_y = (total_h - road_width) / 2.0
+    road_box = patches.Rectangle(
+        (0, road_y), total_w, road_width,
+        linewidth=1, edgecolor='#475569', facecolor='#E2E8F0', hatch='//'
+    )
+    ax.add_patch(road_box)
+    ax.text(
+        total_w * 0.35, road_y + (road_width / 2.0),
+        f"Komunikace (šířka {road_width} m)",
+        color='#334155', fontsize=8, weight='bold', va='center'
+    )
+
+    # Obratiště IZS na konci
+    if has_turn:
+        turn_size = 12.0
+        turn_y = (total_h - turn_size) / 2.0
+        turn_x = max(0, total_w - turn_size)
+        turn_box = patches.Rectangle(
+            (turn_x, turn_y), turn_size, turn_size,
+            linewidth=1.5, edgecolor='#DC2626', facecolor='#FEE2E2'
+        )
+        ax.add_patch(turn_box)
+        ax.text(
+            turn_x + (turn_size / 2.0), turn_y + (turn_size / 2.0),
+            "Točna IZS\n12x12 m",
+            color='#B91C1C', fontsize=7, weight='bold', ha='center', va='center'
+        )
+
+    # Rozdělení na parcely po severní a jižní straně ulice
+    if num_plots > 0:
+        plots_north = (num_plots + 1) // 2
+        plots_south = num_plots // 2
+
+        strip_h_north = (total_h - road_width) / 2.0
+        strip_h_south = strip_h_north
+
+        dx_north = total_w / max(1, plots_north)
+        plot_idx = 1
+
+        # Severní strana
+        for i in range(plots_north):
+            px = i * dx_north
+            pw = dx_north
+            p_area = (net_area / num_plots)
+            p_box = patches.Rectangle(
+                (px, road_y + road_width), pw, strip_h_north,
+                linewidth=1, edgecolor='#16A34A', facecolor='#DCFCE7', alpha=0.5
+            )
+            ax.add_patch(p_box)
+            ax.text(
+                px + pw / 2.0, road_y + road_width + strip_h_north / 2.0,
+                f"P{plot_idx}\n{p_area:.0f} m²",
+                color='#15803D', fontsize=8, weight='bold', ha='center', va='center'
+            )
+            plot_idx += 1
+
+        # Jižní strana
+        if plots_south > 0:
+            dx_south = total_w / plots_south
+            for i in range(plots_south):
+                px = i * dx_south
+                pw = dx_south
+                p_area = (net_area / num_plots)
+                p_box = patches.Rectangle(
+                    (px, 0), pw, strip_h_south,
+                    linewidth=1, edgecolor='#2563EB', facecolor='#DBEAFE', alpha=0.5
+                )
+                ax.add_patch(p_box)
+                ax.text(
+                    px + pw / 2.0, strip_h_south / 2.0,
+                    f"P{plot_idx}\n{p_area:.0f} m²",
+                    color='#1D4ED8', fontsize=8, weight='bold', ha='center', va='center'
+                )
+                plot_idx += 1
+
+    ax.set_xlim(-5, total_w + 5)
+    ax.set_ylim(-5, total_h + 5)
+    ax.set_aspect('equal')
+    ax.axis('off')
+    plt.title(
+        f"Schematický návrh parcelace: {num_plots} stavebních parcel na ploše {area_total:.0f} m²",
+        fontsize=10, weight='bold', pad=12
+    )
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as img_file:
+        plt.savefig(img_file.name, dpi=180, bbox_inches='tight')
+        img_path = img_file.name
+    plt.close(fig)
+    return img_path
+
+
+def generate_pdf(analyzer, out_pdf, up, prices, plot_img=None):
     d = analyzer.data
     evals = analyzer.evaluate_rules(up)
-    doc = SimpleDocTemplate(out_pdf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
+    doc = SimpleDocTemplate(
+        out_pdf,
+        pagesize=A4,
+        rightMargin=1.5*cm, leftMargin=1.5*cm,
+        topMargin=1.5*cm, bottomMargin=1.5*cm
+    )
     styles = getSampleStyleSheet()
 
     c_blue = colors.HexColor('#1F4E79')
     c_red = colors.HexColor('#B71C1C')
-    t_s = ParagraphStyle('T', fontName=FONT_BOLD, fontSize=14, leading=18, textColor=c_blue)
-    b_s = ParagraphStyle('B', fontName=FONT_MAIN, fontSize=8.5, leading=12)
-    bp = ParagraphStyle('BP', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.HexColor('#1B5E20'), alignment=1)
-    bw = ParagraphStyle('BW', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.HexColor('#E65100'), alignment=1)
-    bd = ParagraphStyle('BD', fontName=FONT_BOLD, fontSize=7.5, textColor=c_red, alignment=1)
+    t_s = ParagraphStyle('T', fontName=FONT_BOLD, fontSize=13, leading=17, textColor=c_blue)
+    b_s = ParagraphStyle('B', fontName=FONT_MAIN, fontSize=8, leading=11)
+    bp = ParagraphStyle('BP', fontName=FONT_BOLD, fontSize=7, textColor=colors.HexColor('#1B5E20'), alignment=1)
+    bw = ParagraphStyle('BW', fontName=FONT_BOLD, fontSize=7, textColor=colors.HexColor('#E65100'), alignment=1)
+    bd = ParagraphStyle('BD', fontName=FONT_BOLD, fontSize=7, textColor=c_red, alignment=1)
 
     story = []
-    story.append(Paragraph("PARCELCHECK AI — AUDIT POZEMKU", t_s))
-    story.append(Paragraph(f"Parcela č. {d['parcel_no']} | k.ú. {d['cadastral_area']} ({d['municipality']}) | LV {d['lv_no']}", b_s))
-    story.append(HRFlowable(width="100%", thickness=1.5, color=c_blue, spaceBefore=3, spaceAfter=8))
+    story.append(Paragraph("PARCELCHECK AI — DEVELOPERSKÝ AUDIT & PARCELACE", t_s))
+    story.append(Paragraph(
+        f"Parcela č. {d['parcel_no']} | k.ú. {d['cadastral_area']} ({d['municipality']}) | LV {d['lv_no']}",
+        b_s
+    ))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=c_blue, spaceBefore=2, spaceAfter=6))
 
     if d["has_plomba"]:
-        tp = Table([[Paragraph(f"<b>STOPKA: NA POZEMKU VÁZNE PLOMBA ({d['plomba_id']})</b>", ParagraphStyle('P', fontName=FONT_BOLD, fontSize=9, textColor=c_red))]], colWidths=[18*cm])
-        tp.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')), ('BOX', (0,0), (-1,-1), 1, c_red), ('PADDING', (0,0), (-1,-1), 5)]))
+        tp = Table([[
+            Paragraph(f"<b>STOPKA: NA POZEMKU VÁZNE PLOMBA ({d['plomba_id']})</b>", ParagraphStyle('P', fontName=FONT_BOLD, fontSize=8.5, textColor=c_red))
+        ]], colWidths=[18*cm])
+        tp.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')),
+            ('BOX', (0,0), (-1,-1), 1, c_red),
+            ('PADDING', (0,0), (-1,-1), 4)
+        ]))
         story.append(tp)
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 4))
 
     info_data = [
-        [Paragraph(f"<b>Lokalita:</b> {d['municipality']}", b_s), Paragraph(f"<b>Výměra:</b> {d['area_m2']} m²", b_s)],
-        [Paragraph(f"<b>Parcela / LV:</b> {d['parcel_no']} / {d['lv_no']}", b_s), Paragraph(f"<b>Druh:</b> {d['land_type']}", b_s)]
+        [Paragraph(f"<b>Lokalita:</b> {d['municipality']} ({d['cadastral_area']})", b_s), Paragraph(f"<b>Výměra:</b> {d['area_m2']} m²", b_s)],
+        [Paragraph(f"<b>Parcela / LV:</b> {d['parcel_no']} / LV {d['lv_no']}", b_s), Paragraph(f"<b>Druh:</b> {d['land_type']}", b_s)]
     ]
     t_info = Table(info_data, colWidths=[9*cm, 9*cm])
-    t_info.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 4)]))
+    t_info.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('PADDING', (0,0), (-1,-1), 3)
+    ]))
     story.append(t_info)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 6))
 
-    story.append(Paragraph("<b>Semafor developerských rizik:</b>", t_s))
+    if plot_img and os.path.exists(plot_img):
+        story.append(Paragraph("<b>Situační návrh dělení pozemku a uličního koridoru (ČSN 73 6110):</b>", t_s))
+        story.append(Spacer(1, 3))
+        story.append(ReportLabImage(plot_img, width=17.5*cm, height=8.0*cm))
+        story.append(Spacer(1, 6))
+
+    story.append(Paragraph("<b>Semafor developerských rizik a územního plánu:</b>", t_s))
     for item in evals:
         bg = '#FFEBEE' if item['stat'] == 'DANGER' else ('#FFF3E0' if item['stat'] == 'WARNING' else '#E8F5E9')
         badge = bd if item['stat'] == 'DANGER' else (bw if item['stat'] == 'WARNING' else bp)
@@ -206,9 +357,14 @@ def generate_pdf(analyzer, out_pdf, up, prices):
             [Paragraph(item['detail'], b_s), ""]
         ]
         tr = Table(row, colWidths=[14.5*cm, 3.5*cm])
-        tr.setStyle(TableStyle([('SPAN', (0,1), (1,1)), ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(bg)), ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 4)]))
+        tr.setStyle(TableStyle([
+            ('SPAN', (0,1), (1,1)),
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(bg)),
+            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+            ('PADDING', (0,0), (-1,-1), 3)
+        ]))
         story.append(tr)
-        story.append(Spacer(1, 3))
+        story.append(Spacer(1, 2))
 
     doc.build(story)
     return out_pdf
@@ -217,10 +373,10 @@ def generate_pdf(analyzer, out_pdf, up, prices):
 st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️", layout="wide")
 
 st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
-st.caption("Automatická detekce katastrálních rizik, územního plánu, cenové mapy a infrastruktury")
+st.caption("Automatická detekce katastru, územního plánu, cenové mapy a situace parcelace")
 
 with st.sidebar:
-    st.header("⚙️️ Ověření pozemku")
+    st.header("⚙️ Ověření pozemku")
     nets_ok = st.checkbox("Mám ověřeno fyzické napojení na sítě", value=False)
     st.caption("Při nezaškrtnutí systém sítě uvádí jako neověřené riziko.")
 
@@ -258,7 +414,7 @@ if uploaded_file is not None:
         "nets_verified": nets_ok
     }
 
-    t1, t2 = st.tabs(["📋 1. Právní & Územní Audit", "📐 2. Developerská parcelace a rozpočet"])
+    t1, t2 = st.tabs(["📋 1. Právní & Územní Audit", "📐 2. Developerská parcelace & Plánek"])
 
     with t1:
         if auto_up["is_commercial"]:
@@ -290,16 +446,6 @@ if uploaded_file is not None:
             else:
                 st.success(f"**[{check['cat']}] {check['title']}**\n\n{check['detail']}")
 
-        out_name = f"Audit_{d['municipality']}_{d['parcel_no'].replace('/', '_')}.pdf"
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_o:
-            tmp_pdf_p = tmp_o.name
-
-        generate_pdf(analyzer, tmp_pdf_p, up_params, bench_p)
-        with open(tmp_pdf_p, "rb") as f_pdf:
-            pdf_b = f_pdf.read()
-
-        st.download_button("📄 Stáhnout Manažerský PDF Audit", data=pdf_b, file_name=out_name, mime="application/pdf", type="primary")
-
     with t2:
         st.subheader("📐 Návrh parcelace a rozpočet infrastruktury dle ČSN")
         pc1, pc2 = st.columns(2)
@@ -330,7 +476,16 @@ if uploaded_file is not None:
         b3.metric("Čistá plocha parcel", f"{net_m2:.0f} m²")
         b4.metric("Počet parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
 
+        # --- Grafické zobrazení plánku parcelace ---
         st.divider()
+        st.markdown("#### 🗺️ Vizuální situační schéma parcelace")
+        plot_img_path = render_parcelation_plot(
+            area_total, net_m2, n_plots, r_w, r_len, has_turn
+        )
+        st.image(plot_img_path, use_container_width=True)
+
+        st.divider()
+        st.markdown("#### 🛠️ Položkový rozpočet infrastruktury")
         unit_road = 14000.0 if r_w == 8.0 else 11000.0
         cost_road = r_len * unit_road
         cost_pave = r_len * 4000.0 if r_w == 8.0 else 0.0
@@ -346,7 +501,11 @@ if uploaded_file is not None:
         cost_legal = 120000.0 if has_contract else 0.0
         cost_contrib = n_plots * contrib if has_contract else 0.0
 
-        tot_capex = cost_road + cost_pave + cost_water + cost_sewer + cost_rain + cost_elec + cost_light + cost_conn + cost_turn + cost_zpf + cost_legal + cost_contrib
+        tot_capex = (
+            cost_road + cost_pave + cost_water + cost_sewer + cost_rain +
+            cost_elec + cost_light + cost_conn + cost_turn + cost_zpf +
+            cost_legal + cost_contrib
+        )
 
         tbl = [
             {"Položka infrastruktury": f"Komunikace ({r_len:.0f} bm, šířka {r_w} m)", "Orientační náklad": f"{cost_road:,.0f} Kč"},
@@ -382,8 +541,25 @@ if uploaded_file is not None:
         r3.metric("Hrubý zisk", f"{prof_c:,.0f} Kč".replace(',', ' '))
         r4.metric("Marže projektu", f"{mar_c:.1f} %")
 
+        out_name = f"Audit_s_parcelaci_{d['municipality']}_{d['parcel_no'].replace('/', '_')}.pdf"
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_o:
+            tmp_pdf_p = tmp_o.name
+
+        generate_pdf(analyzer, tmp_pdf_p, up_params, bench_p, plot_img_path)
+        with open(tmp_pdf_p, "rb") as f_pdf:
+            pdf_b = f_pdf.read()
+
+        st.download_button(
+            "📄 Stáhnout Manažerský PDF Audit včetně Situačního plánku",
+            data=pdf_b,
+            file_name=out_name,
+            mime="application/pdf",
+            type="primary"
+        )
+
     try:
         os.remove(tmp_p)
         os.remove(tmp_pdf_p)
+        os.remove(plot_img_path)
     except Exception:
         pass
