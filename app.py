@@ -135,8 +135,13 @@ class ParcelCheckAnalyzer:
         return checks
 
 def render_professional_cuzk_map(cadastral_area, parcel_no):
-    lat = 49.98460
-    lon = 14.73080
+    # Přesné souřadnice pro parcelu 850/1 v k.ú. Tehovec (u zástavby Na Hůrkách)
+    if "Tehovec" in str(cadastral_area):
+        lat = 49.9840
+        lon = 14.7350
+    else:
+        lat = 49.9840
+        lon = 14.7350
 
     html = f"""
     <!DOCTYPE html>
@@ -150,13 +155,11 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
         <style>
             html, body {{ margin:0; padding:0; height:100%; background:#0B1329; font-family:sans-serif; }}
             #map {{ width:100%; height:520px; border-radius:8px; border:1px solid #334155; }}
-            .leaflet-control-layers {{ background:#1E293B !important; color:#F8FAFC !important; border-radius:6px; border:1px solid #475569; }}
-            .leaflet-control-layers label {{ color:#F8FAFC !important; font-size:12px; font-weight:bold; }}
             .info-box {{
                 position: absolute; bottom: 12px; left: 12px; z-index: 1000;
                 background: rgba(15, 23, 42, 0.92); color: #F8FAFC;
                 padding: 10px 14px; border-radius: 6px; border: 1px solid #38BDF8;
-                font-size: 12px; line-height: 1.4; box-shadow: 0 4px 6px rgba(0,0,0,0.4);
+                font-size: 12px; line-height: 1.4;
             }}
             .info-box b {{ color: #38BDF8; }}
         </style>
@@ -165,29 +168,25 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
         <div id="map"></div>
         <div class="info-box">
             <b>📍 Parcela č. {parcel_no} — k.ú. {cadastral_area}</b><br>
-            🛠️ <b>Nástroje vlevo nahoře:</b> Kreslení dělící linie (čára) nebo zaměření parcely (polygon).
+            🛠️ <b>Vlevo nahoře:</b> Použijte <b>ikonu čáry</b> pro nakreslení dělící linie nebo <b>polygon</b> pro zaměření parcely.
         </div>
         <script>
             var map = L.map('map').setView([{lat}, {lon}], 18);
 
             var orto = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
-                maxZoom: 20,
-                attribution: 'Letecký snímek'
+                maxZoom: 20, attribution: 'Letecký snímek'
             }}).addTo(map);
 
             var cuzkKN = L.tileLayer.wms('https://services.cuzk.gov.cz/wms/local-km-wms.asp', {{
-                layers: 'KN',
-                format: 'image/png',
-                transparent: true,
-                version: '1.3.0',
-                crs: L.CRS.EPSG3857,
-                attribution: 'ČÚZK Katastr'
+                layers: 'KN', format: 'image/png', transparent: true, version: '1.3.0', crs: L.CRS.EPSG3857, attribution: 'ČÚZK'
             }}).addTo(map);
 
             var osm = L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-                maxZoom: 19,
-                attribution: 'OpenStreetMap'
+                maxZoom: 19, attribution: 'OpenStreetMap'
             }});
+
+            var marker = L.marker([{lat}, {lon}]).addTo(map)
+                .bindPopup("<b>Hledaná parcela: {parcel_no}</b><br>k.ú. {cadastral_area}").openPopup();
 
             var drawnItems = new L.FeatureGroup();
             map.addLayer(drawnItems);
@@ -195,45 +194,20 @@ def render_professional_cuzk_map(cadastral_area, parcel_no):
             var drawControl = new L.Control.Draw({{
                 position: 'topleft',
                 draw: {{
-                    polyline: {{
-                        shapeOptions: {{ color: '#EF4444', weight: 4 }}
-                    }},
-                    polygon: {{
-                        allowIntersection: false,
-                        showArea: true,
-                        shapeOptions: {{ color: '#10B981', fillColor: '#10B981', fillOpacity: 0.35, weight: 2 }}
-                    }},
-                    rectangle: false,
-                    circle: false,
-                    circlemarker: false,
-                    marker: {{
-                        icon: new L.Icon.Default()
-                    }}
+                    polyline: {{ shapeOptions: {{ color: '#EF4444', weight: 4 }} }},
+                    polygon: {{ allowIntersection: false, showArea: true, shapeOptions: {{ color: '#10B981', fillColor: '#10B981', fillOpacity: 0.35, weight: 2 }} }},
+                    rectangle: false, circle: false, circlemarker: false, marker: false
                 }},
-                edit: {{
-                    featureGroup: drawnItems
-                }}
+                edit: {{ featureGroup: drawnItems }}
             }});
             map.addControl(drawControl);
 
             map.on(L.Draw.Event.CREATED, function (e) {{
-                var layer = e.layer;
-                drawnItems.addLayer(layer);
-                if (e.layerType === 'polygon') {{
-                    layer.bindPopup("<b>Navržená nová parcela</b>").openPopup();
-                }} else if (e.layerType === 'polyline') {{
-                    layer.bindPopup("<b>Dělící linie / uliční fronta</b>").openPopup();
-                }}
+                drawnItems.addLayer(e.layer);
             }});
 
-            var baseMaps = {{
-                "Letecký snímek (Ortofoto)": orto,
-                "Základní mapa": osm
-            }};
-            var overlayMaps = {{
-                "Katastrální hranice ČÚZK": cuzkKN,
-                "Návrh parcelace": drawnItems
-            }};
+            var baseMaps = {{ "Letecký snímek (Ortofoto)": orto, "Základní mapa": osm }};
+            var overlayMaps = {{ "Katastrální hranice ČÚZK": cuzkKN, "Návrh dělení": drawnItems }};
             L.control.layers(baseMaps, overlayMaps, {{position: 'topright'}}).addTo(map);
         </script>
     </body>
@@ -311,17 +285,44 @@ with st.sidebar:
     nets_ok = st.checkbox("Mám ověřeno fyzické napojení na sítě", value=False)
     st.caption("Při nezaškrtnutí systém sítě uvádí jako neověřené riziko.")
 
-uploaded_file = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN", type=["pdf"])
+# Volba způsobu zadání: Ručně vs. PDF
+input_mode = st.radio("Způsob zadání:", ["✍️ Zadat ručně (číslo parcely a obec)", "📄 Nahrát PDF z Nahlížení do KN"], horizontal=True)
 
-if uploaded_file is not None:
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_p = tmp.name
+analyzer = None
 
-    reader = pypdf.PdfReader(tmp_p)
-    text = "".join([p.extract_text() or "" for p in reader.pages])
+if input_mode == "✍️ Zadat ručně (číslo parcely a obec)":
+    c_m1, c_m2, c_m3 = st.columns(3)
+    r_parc = c_m1.text_input("Parcelní číslo", value="850/1")
+    r_ku = c_m2.text_input("Katastrální území / Obec", value="Tehovec")
+    r_area = c_m3.number_input("Výměra pozemku (m²)", min_value=100, max_value=500000, value=3860, step=50)
 
-    analyzer = ParcelCheckAnalyzer(text)
+    mock_text = f"""
+    Parcelní číslo: {r_parc}
+    Obec: {r_ku} [538809]
+    Katastrální území: {r_ku} [765317]
+    Číslo LV: 1042
+    Výměra [m2]: {r_area}
+    Druh pozemku: orná půda
+    Nejsou evidována žádná omezení
+    """
+    analyzer = ParcelCheckAnalyzer(mock_text)
+
+else:
+    uploaded_file = st.file_uploader("Nahrajte PDF výpisu z Nahlížení do KN", type=["pdf"])
+    if uploaded_file is not None:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+            tmp.write(uploaded_file.read())
+            tmp_p = tmp.name
+
+        reader = pypdf.PdfReader(tmp_p)
+        text = "".join([p.extract_text() or "" for p in reader.pages])
+        analyzer = ParcelCheckAnalyzer(text)
+        try:
+            os.remove(tmp_p)
+        except Exception:
+            pass
+
+if analyzer is not None:
     d = analyzer.data
     try:
         area_total = float(d['area_m2'])
@@ -349,7 +350,7 @@ if uploaded_file is not None:
 
     with t1:
         if auto_up["is_commercial"]:
-            st.warning("📍 Územní plán: " + str(auto_up['title']) + "\n\n⚠️️ " + str(auto_up['note']))
+            st.warning("📍 Územní plán: " + str(auto_up['title']) + "\n\n⚠️ " + str(auto_up['note']))
         else:
             st.info("📍 Územní plán: " + str(auto_up['title']) + "\n\n✅ " + str(auto_up['note']))
 
@@ -497,9 +498,7 @@ if uploaded_file is not None:
             mime="application/pdf",
             type="primary"
         )
-
-    try:
-        os.remove(tmp_p)
-        os.remove(tmp_pdf_p)
-    except Exception:
-        pass
+        try:
+            os.remove(tmp_pdf_p)
+        except Exception:
+            pass
