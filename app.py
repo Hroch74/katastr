@@ -45,9 +45,9 @@ if input_mode == "📄 Nahrát PDF z KN":
 else:
     with st.form("f_manual"):
         c1, c2, c3 = st.columns(3)
-        p_num = c1.text_input("Parcelní číslo", value="841/4")
-        p_ku = c2.text_input("Obec nebo k.ú.", value="Kozojedy")
-        p_area = c3.number_input("Výměra m2", min_value=0, max_value=5000000, value=0, step=100)
+        p_num = c1.text_input("Parcelní číslo", value="850/1")
+        p_ku = c2.text_input("Obec nebo k.ú.", value="Tehovec")
+        p_area = c3.number_input("Výměra m2", min_value=0, max_value=5000000, value=3860, step=100)
         if st.form_submit_button("Prověřit pozemek", type="primary"):
             if p_num and p_ku:
                 parcel_data = {
@@ -80,13 +80,16 @@ if parcel_data:
     if parcel_data.get("has_plomba"):
         st.error("POZOR PLOMBA: " + str(parcel_data.get("plomba_id")))
 
+    # Proklik na zdroje
     q_mapy = urllib.parse.quote(f"{p_num} {p_ku}")
     url_m = f"https://mapy.cz/zakladni?q={q_mapy}&z=17"
     url_c = "https://nahlizenidokn.cuzk.cz/"
+    url_ik = "https://www.ikarus21.cz/"
     
-    b1, b2 = st.columns(2)
-    b1.link_button("Otevřít na Mapy.cz (Katastr)", url_m, use_container_width=True)
-    b2.link_button("Otevřít Nahlížení ČÚZK", url_c, use_container_width=True)
+    b1, b2, b3 = st.columns(3)
+    b1.link_button("🌐 Mapy.cz (Katastr)", url_m, use_container_width=True)
+    b2.link_button("📜 Nahlížení ČÚZK", url_c, use_container_width=True)
+    b3.link_button("📊 Ikarus21 (Cenové mapy)", url_ik, use_container_width=True)
 
     is_field = any(w in p_type.lower() for w in ["orná", "pole", "les", "travní", "zahrada"])
     z_type = st.radio("Status v Územním plánu:", ["Nestavební (pole/les/NZ)", "Zastavitelná plocha (RD)"], index=0 if is_field else 1)
@@ -117,20 +120,29 @@ if parcel_data:
     if not is_buildable:
         st.error(f"Pozemek {p_num} je nestavební orná půda / pole. Zákaz výstavby RD.")
         if area_val > 0:
+            cp1, cp2 = st.columns(2)
+            p_agr = cp1.number_input("Cena orné půdy z Ikarusu (Kč/m2)", value=60, step=5)
+            p_spec = cp2.number_input("Spekulativní cena s výhledem ÚP (Kč/m2)", value=450, step=25)
+            
             a1, a2 = st.columns(2)
-            a1.metric("Cena orné půdy (cca 55 Kč/m2)", f"{area_val * 55:,.0f} Kč")
-            a2.metric("Spekulativní výhled (cca 450 Kč/m2)", f"{area_val * 450:,.0f} Kč")
+            a1.metric(f"Zemědělská hodnota ({p_agr} Kč/m2)", f"{area_val * p_agr:,.0f} Kč")
+            a2.metric(f"Rozvojová / spekulativní hodnota", f"{area_val * p_spec:,.0f} Kč")
     else:
         st.success(f"Zastavitelná plocha: Parcela {p_num} určena k zástavbě RD.")
         if area_val > 0:
-            t_plot = st.number_input("Cílová výměra 1 parcely (m2)", value=800, step=50)
-            road_m2 = area_val * 0.15
+            pc1, pc2 = st.columns(2)
+            with pc1:
+                t_plot = st.number_input("Cílová výměra 1 parcely (m2)", value=800, step=50)
+                road_pct = st.slider("Podíl komunikací (%)", min_value=10, max_value=25, value=15)
+            with pc2:
+                buy_m2 = st.number_input("Nákup surového pozemku dle Ikarusu (Kč/m2)", value=3500, step=100)
+                sell_m2 = st.number_input("Prodej zasíťované parcely dle Ikarusu (Kč/m2)", value=9500, step=200)
+
+            road_m2 = area_val * (road_pct / 100.0)
             net_m2 = area_val - road_m2
             n_plots = int(net_m2 // t_plot) if t_plot > 0 else 0
-            
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Plocha cest (15%)", f"{road_m2:.0f} m2")
-            k2.metric("Čisté stavební parcely", f"{net_m2:.0f} m2")
-            k3.metric("Počet parcel", f"{n_plots} ks")
-else:
-    st.info("Nahrajte PDF nebo zadejte parcelu a obec nahore.")
+            road_len = max(30.0, road_m2 / 8.0)
+            capex = (road_len * 32500.0) + (n_plots * 120000.0)
+            cost_tot = (area_val * buy_m2) + capex
+            rev_tot = net_m2 * sell_m2
+            profit = rev_tot - cost
