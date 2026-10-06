@@ -18,7 +18,6 @@ def setup_czech_fonts():
     font_bold = 'Helvetica-Bold'
     font_oblique = 'Helvetica-Oblique'
 
-    # 1. Zkouška systémových písem Windows a Linux
     candidates = [
         ('C:\\Windows\\Fonts\\arial.ttf', 'C:\\Windows\\Fonts\\arialbd.ttf', 'C:\\Windows\\Fonts\\ariali.ttf'),
         ('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf'),
@@ -34,7 +33,6 @@ def setup_czech_fonts():
             except Exception:
                 pass
 
-    # 2. Automatické stažení DejaVu Sans na cloudu, pokud systémový font chybí
     cache_dir = tempfile.gettempdir()
     reg_path = os.path.join(cache_dir, "DejaVuSans.ttf")
     bold_path = os.path.join(cache_dir, "DejaVuSans-Bold.ttf")
@@ -52,7 +50,6 @@ def setup_czech_fonts():
         return font_main, font_bold, font_oblique
 
 FONT_MAIN, FONT_BOLD, FONT_OBLIQUE = setup_czech_fonts()
-
 
 class ParcelCheckAnalyzer:
     def __init__(self, raw_text):
@@ -193,5 +190,43 @@ def generate_pdf_report(analyzer, output_pdf, up_params=None):
     story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor('#1F4E79'), spaceBefore=2, spaceAfter=8))
 
     if data.get("has_plomba", False):
+        plomba_text = "<b>POZOR: NA POZEMKU VÁZNE PLOMBA (" + str(data['plomba_id']) + ")</b><br/>Nemovitost je dotčena probíhající změnou právního vztahu. Před jakoukoliv transakcí je nezbytné nahlédnout do spisu na katastru!"
         plomba_table = [
-            [Paragraph(f"<b>POZOR: NA POZEMKU VÁZNE PLOMBA ({data['plomba_id']})</b><br/>Nemovitost je dotčena probíhající změnou právního
+            [Paragraph(plomba_text, ParagraphStyle('PlombaWarning', fontName=FONT_BOLD, fontSize=9, textColor=colors.HexColor('#B71C1C')))]
+        ]
+        tp = Table(plomba_table, colWidths=[18.0*cm])
+        tp.setStyle(TableStyle([
+            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')),
+            ('BOX', (0,0), (-1,-1), 1.5, colors.HexColor('#B71C1C')),
+            ('TOPPADDING', (0,0), (-1,-1), 6),
+            ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ]))
+        story.append(tp)
+        story.append(Spacer(1, 8))
+
+    t_data = [
+        [Paragraph("<b>Lokalita:</b>", body_style), Paragraph(f"{data['municipality']} (k.ú. {data['cadastral_area']})", body_style),
+         Paragraph("<b>Výměra:</b>", body_style), Paragraph(f"{data['area_m2']} m²", body_style)],
+        [Paragraph("<b>Parcela / LV:</b>", body_style), Paragraph(f"{data['parcel_no']} / LV č. {data['lv_no']}", body_style),
+         Paragraph("<b>Druh pozemku:</b>", body_style), Paragraph(f"{data['land_type']}", body_style)],
+        [Paragraph("<b>Vlastník:</b>", body_style), Paragraph(f"{data['owner'][:32]}...", body_style),
+         Paragraph("<b>Ochrana:</b>", body_style), Paragraph(f"{data['protection'] if data['protection'] else 'Standardní'}", body_style)]
+    ]
+    t = Table(t_data, colWidths=[3.0*cm, 6.0*cm, 3.0*cm, 6.0*cm])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
+        ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#E2E8F0')),
+        ('TOPPADDING', (0,0), (-1,-1), 4),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+    ]))
+    story.append(t)
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph("1. Limity územního plánu a developerská zastavitelnost", h2_style))
+    area_val = float(data['area_m2']) if data['area_m2'].isdigit() else 1000.0
+    is_comm = up_params.get("is_commercial", False) if up_params else False
+    cov_pct = float(up_params.get("max_coverage_pct", 50.0 if is_comm else 30.0))
+    green_pct = float(up_params.get("min_greenery_pct", 20.0 if is_comm else 50.0))
+    max_cov = area_val * (cov_pct / 100.0)
+    min_green = area_val * (green_pct /
