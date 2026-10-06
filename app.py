@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import tempfile
 import os
 import re
@@ -14,10 +15,7 @@ from reportlab.platypus import (
     TableStyle,
     HRFlowable
 )
-from reportlab.lib.styles import (
-    getSampleStyleSheet,
-    ParagraphStyle
-)
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
@@ -42,9 +40,7 @@ FONT_MAIN, FONT_BOLD = setup_czech_fonts()
 def get_benchmark_prices(municipality, cadastral_area):
     m = str(municipality).lower()
     c = str(cadastral_area).lower()
-    if any(k in m or k in c for k in [
-        "tehovec", "říčany", "ricany", "mukařov", "babice"
-    ]):
+    if any(k in m or k in c for k in ["tehovec", "říčany", "ricany", "mukařov", "babice"]):
         return {
             "region": "Praha-východ",
             "raw_avg": 3500,
@@ -90,39 +86,18 @@ class ParcelCheckAnalyzer:
         self.data = self._parse()
 
     def _parse(self):
-        pm = re.search(
-            r"Objekt je dotčen změnou právního vztahu:\s*([^;\n\r]+)",
-            self.raw
-        )
+        pm = re.search(r"Objekt je dotčen změnou právního vztahu:\s*([^;\n\r]+)", self.raw)
         data = {
-            "parcel_no": self._ex(
-                r"Parcelní číslo:\s*([0-9]+(?:/[0-9]+)?)"
-            ),
-            "municipality": self._ex(
-                r"Obec:\s*([^\n\r\[]+)"
-            ),
-            "cadastral_area": self._ex(
-                r"Katastrální území:\s*([^\n\r\[]+)"
-            ),
-            "lv_no": self._ex(
-                r"Číslo LV:\s*([0-9]+)"
-            ),
-            "area_m2": self._ex(
-                r"Výměra \[m2\]:\s*([0-9\s]+)"
-            ).replace(" ", ""),
-            "land_type": self._ex(
-                r"Druh pozemku:\s*([^\n\r]+)"
-            ),
-            "owner": self._ex(
-                r"Vlastnické právo\s*(?:Podíl)?\s*\n\s*([^\n\r]+)"
-            ),
-            "protection": self._ex(
-                r"Způsob ochrany nemovitosti\s*Název\s*\n\s*([^\n\r]+)"
-            ),
+            "parcel_no": self._ex(r"Parcelní číslo:\s*([0-9]+(?:/[0-9]+)?)"),
+            "municipality": self._ex(r"Obec:\s*([^\n\r\[]+)"),
+            "cadastral_area": self._ex(r"Katastrální území:\s*([^\n\r\[]+)"),
+            "lv_no": self._ex(r"Číslo LV:\s*([0-9]+)"),
+            "area_m2": self._ex(r"Výměra \[m2\]:\s*([0-9\s]+)").replace(" ", ""),
+            "land_type": self._ex(r"Druh pozemku:\s*([^\n\r]+)"),
+            "owner": self._ex(r"Vlastnické právo\s*(?:Podíl)?\s*\n\s*([^\n\r]+)"),
+            "protection": self._ex(r"Způsob ochrany nemovitosti\s*Název\s*\n\s*([^\n\r]+)"),
             "limitations": "Nejsou evidována žádná omezení" in self.raw,
-            "bpej": self._ex(
-                r"BPEJ\s*Výměra\s*\n\s*([0-9]+)"
-            ),
+            "bpej": self._ex(r"BPEJ\s*Výměra\s*\n\s*([0-9]+)"),
             "mortgage": "Zástavní právo" in self.raw,
             "has_plomba": bool(pm),
             "plomba_id": pm.group(1).strip() if pm else ""
@@ -214,177 +189,224 @@ class ParcelCheckAnalyzer:
 
         return checks
 
+
+# --- Interaktivní mapa s leteckým snímkem, ČÚZK katastrem a nákresem parcelace ---
+def render_interactive_parcelation_map(cadastral_area, parcel_no, area_total, n_plots, r_w, has_turn):
+    # Výchozí GPS souřadnice (Tehovec a okolí)
+    lat = 49.9848
+    lon = 14.7285
+
+    # Přepočet rozměrů pozemku a parcelace na zeměpisné souřadnice
+    aspect = 1.7
+    w_m = (area_total * aspect) ** 0.5
+    h_m = area_total / w_m
+
+    dlat_m = 1.0 / 111139.0
+    dlon_m = 1.0 / (111139.0 * 0.643)
+
+    poly_h = h_m * dlat_m
+    poly_w = w_m * dlon_m
+
+    p_south = lat - (poly_h / 2.0)
+    p_north = lat + (poly_h / 2.0)
+    p_west = lon - (poly_w / 2.0)
+    p_east = lon + (poly_w / 2.0)
+
+    # Koridor silnice středem
+    r_lat_span = (r_w * dlat_m)
+    r_south = lat - (r_lat_span / 2.0)
+    r_north = lat + (r_lat_span / 2.0)
+
+    # Příprava parcel v JavaScriptu
+    plots_js = []
+    p_base = parcel_no.split("/")[0]
+
+    if n_plots > 0:
+        n_n = (n_plots + 1) // 2
+        n_s = n_plots // 2
+        p_area = round((area_total - (r_w * w_m)) / n_plots)
+
+        # Severní parcely (zelené)
+        w_step_n = poly_w / max(1, n_n)
+        for i in range(n_n):
+            w1 = p_west + i * w_step_n
+            w2 = w1 + w_step_n
+            idx = i + 1
+            plots_js.append(f"""
+            L.polygon([
+                [{r_north}, {w1}], [{p_north}, {w1}],
+                [{p_north}, {w2}], [{r_north}, {w2}]
+            ], {{
+                color: '#10B981', weight: 2, fillColor: '#10B981', fillOpacity: 0.45
+            }}).addTo(map).bindTooltip("<b>parc. č. {p_base}/{idx+1}</b><br>{p_area} m² (RD)", {{permanent: true, direction: "center", className: "plot-label"}});
+            """)
+
+        # Jižní parcely (modré)
+        if n_s > 0:
+            w_step_s = poly_w / n_s
+            for j in range(n_s):
+                w1 = p_west + j * w_step_s
+                w2 = w1 + w_step_s
+                idx = n_n + j + 1
+                plots_js.append(f"""
+                L.polygon([
+                    [{p_south}, {w1}], [{r_south}, {w1}],
+                    [{r_south}, {w2}], [{p_south}, {w2}]
+                ], {{
+                    color: '#3B82F6', weight: 2, fillColor: '#3B82F6', fillOpacity: 0.45
+                }}).addTo(map).bindTooltip("<b>parc. č. {p_base}/{idx+1}</b><br>{p_area} m² (RD)", {{permanent: true, direction: "center", className: "plot-label"}});
+                """)
+
+    plots_code = "\n".join(plots_js)
+
+    turn_code = ""
+    if has_turn:
+        t_span = (13.0 * dlon_m)
+        t_h_span = (13.0 * dlat_m)
+        t_w1 = p_east - t_span
+        t_w2 = p_east
+        t_s1 = lat - (t_h_span / 2.0)
+        t_n1 = lat + (t_h_span / 2.0)
+        turn_code = f"""
+        L.polygon([
+            [{t_s1}, {t_w1}], [{t_n1}, {t_w1}],
+            [{t_n1}, {t_w2}], [{t_s1}, {t_w2}]
+        ], {{
+            color: '#EF4444', weight: 2, fillColor: '#EF4444', fillOpacity: 0.65
+        }}).addTo(map).bindTooltip("<b>Točna IZS</b><br>12x12 m", {{permanent: true, direction: "center", className: "turn-label"}});
+        """
+
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <style>
+            html, body {{ margin:0; padding:0; height:100%; background:#0F172A; font-family:sans-serif; }}
+            #map {{ width:100%; height:460px; border-radius:8px; border:1px solid #334155; }}
+            .plot-label {{ background: rgba(15, 23, 42, 0.85); color: #F8FAFC; border: 1px solid #38BDF8; font-size: 11px; font-weight: bold; border-radius: 4px; padding: 2px 5px; text-align: center; }}
+            .turn-label {{ background: rgba(185, 28, 28, 0.9); color: #FFFFFF; border: 1px solid #F87171; font-size: 10px; font-weight: bold; border-radius: 4px; padding: 2px 4px; text-align: center; }}
+            .road-label {{ background: rgba(51, 65, 85, 0.9); color: #F1F5F9; border: 1px solid #94A3B8; font-size: 11px; font-weight: bold; border-radius: 4px; padding: 2px 5px; text-align: center; }}
+        </style>
+    </head>
+    <body>
+        <div id="map"></div>
+        <script>
+            var map = L.map('map').setView([{lat}, {lon}], 18);
+
+            // Letecká mapa (Ortofoto)
+            var orto = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{{z}}/{{y}}/{{x}}', {{
+                maxZoom: 20,
+                attribution: 'Esri World Imagery'
+            }}).addTo(map);
+
+            // Katastrální mapa ČÚZK (WMS)
+            var cuzkKN = L.tileLayer.wms('https://services.cuzk.gov.cz/wms/local-km-wms.asp', {{
+                layers: 'KN',
+                format: 'image/png',
+                transparent: true,
+                version: '1.3.0',
+                crs: L.CRS.EPSG3857,
+                attribution: 'ČÚZK'
+            }}).addTo(map);
+
+            // Celkový obvod pozemku
+            L.polygon([
+                [{p_south}, {p_west}], [{p_north}, {p_west}],
+                [{p_north}, {p_east}], [{p_south}, {p_east}]
+            ], {{
+                color: '#38BDF8', weight: 3, fillOpacity: 0.05
+            }}).addTo(map);
+
+            // Páteřní komunikace
+            L.polygon([
+                [{r_south}, {p_west}], [{r_north}, {p_west}],
+                [{r_north}, {p_east}], [{r_south}, {p_east}]
+            ], {{
+                color: '#64748B', weight: 1.5, fillColor: '#334155', fillOpacity: 0.6
+            }}).addTo(map).bindTooltip("<b>Komunikace ({r_w} m)</b>", {{permanent: true, direction: "center", className: "road-label"}});
+
+            {turn_code}
+            {plots_code}
+
+            L.control.layers({{
+                "Letecký snímek": orto
+            }}, {{
+                "Katastrální mapa ČÚZK": cuzkKN
+            }}, {{position: 'topright'}}).addTo(map);
+        </script>
+    </body>
+    </html>
+    """
+    return html
+
+
 def generate_pdf(analyzer, out_pdf, up, prices, parcel_table=None):
     d = analyzer.data
     evals = analyzer.evaluate_rules(up)
-    doc = SimpleDocTemplate(
-        out_pdf,
-        pagesize=A4,
-        rightMargin=1.5*cm,
-        leftMargin=1.5*cm,
-        topMargin=1.5*cm,
-        bottomMargin=1.5*cm
-    )
+    doc = SimpleDocTemplate(out_pdf, pagesize=A4, rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm)
     styles = getSampleStyleSheet()
 
     c_blue = colors.HexColor('#1F4E79')
     c_red = colors.HexColor('#B71C1C')
-    t_s = ParagraphStyle(
-        'T',
-        fontName=FONT_BOLD,
-        fontSize=13,
-        leading=17,
-        textColor=c_blue
-    )
-    b_s = ParagraphStyle(
-        'B',
-        fontName=FONT_MAIN,
-        fontSize=8,
-        leading=11
-    )
-    bp = ParagraphStyle(
-        'BP',
-        fontName=FONT_BOLD,
-        fontSize=7,
-        textColor=colors.HexColor('#1B5E20'),
-        alignment=1
-    )
-    bw = ParagraphStyle(
-        'BW',
-        fontName=FONT_BOLD,
-        fontSize=7,
-        textColor=colors.HexColor('#E65100'),
-        alignment=1
-    )
-    bd = ParagraphStyle(
-        'BD',
-        fontName=FONT_BOLD,
-        fontSize=7,
-        textColor=c_red,
-        alignment=1
-    )
+    t_s = ParagraphStyle('T', fontName=FONT_BOLD, fontSize=13, leading=17, textColor=c_blue)
+    b_s = ParagraphStyle('B', fontName=FONT_MAIN, fontSize=8, leading=11)
+    bp = ParagraphStyle('BP', fontName=FONT_BOLD, fontSize=7, textColor=colors.HexColor('#1B5E20'), alignment=1)
+    bw = ParagraphStyle('BW', fontName=FONT_BOLD, fontSize=7, textColor=colors.HexColor('#E65100'), alignment=1)
+    bd = ParagraphStyle('BD', fontName=FONT_BOLD, fontSize=7, textColor=c_red, alignment=1)
 
     story = []
-    story.append(
-        Paragraph("PARCELCHECK AI — AUDIT & PARCELACE", t_s)
-    )
-    story.append(
-        Paragraph(
-            f"Parcela {d['parcel_no']} | k.ú. {d['cadastral_area']} | LV {d['lv_no']}",
-            b_s
-        )
-    )
-    story.append(
-        HRFlowable(
-            width="100%",
-            thickness=1.5,
-            color=c_blue,
-            spaceBefore=2,
-            spaceAfter=6
-        )
-    )
+    story.append(Paragraph("PARCELCHECK AI — AUDIT & PARCELACE", t_s))
+    story.append(Paragraph(f"Parcela {d['parcel_no']} | k.ú. {d['cadastral_area']} | LV {d['lv_no']}", b_s))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=c_blue, spaceBefore=2, spaceAfter=6))
 
     if d["has_plomba"]:
-        tp = Table([[
-            Paragraph(
-                f"<b>STOPKA: PLOMBA ({d['plomba_id']})</b>",
-                ParagraphStyle('P', fontName=FONT_BOLD, fontSize=8.5, textColor=c_red)
-            )
-        ]], colWidths=[18*cm])
-        tp.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')),
-            ('BOX', (0,0), (-1,-1), 1, c_red),
-            ('PADDING', (0,0), (-1,-1), 4)
-        ]))
+        tp = Table([[Paragraph(f"<b>STOPKA: PLOMBA ({d['plomba_id']})</b>", ParagraphStyle('P', fontName=FONT_BOLD, fontSize=8.5, textColor=c_red))]], colWidths=[18*cm])
+        tp.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#FFEBEE')), ('BOX', (0,0), (-1,-1), 1, c_red), ('PADDING', (0,0), (-1,-1), 4)]))
         story.append(tp)
         story.append(Spacer(1, 4))
 
     info_data = [
-        [
-            Paragraph(f"<b>Obec:</b> {d['municipality']}", b_s),
-            Paragraph(f"<b>Výměra:</b> {d['area_m2']} m²", b_s)
-        ],
-        [
-            Paragraph(f"<b>Parcela / LV:</b> {d['parcel_no']} / {d['lv_no']}", b_s),
-            Paragraph(f"<b>Druh:</b> {d['land_type']}", b_s)
-        ]
+        [Paragraph(f"<b>Obec:</b> {d['municipality']}", b_s), Paragraph(f"<b>Výměra:</b> {d['area_m2']} m²", b_s)],
+        [Paragraph(f"<b>Parcela / LV:</b> {d['parcel_no']} / {d['lv_no']}", b_s), Paragraph(f"<b>Druh:</b> {d['land_type']}", b_s)]
     ]
     t_info = Table(info_data, colWidths=[9*cm, 9*cm])
-    t_info.setStyle(TableStyle([
-        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')),
-        ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-        ('PADDING', (0,0), (-1,-1), 3)
-    ]))
+    t_info.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#F8FAFC')), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 3)]))
     story.append(t_info)
     story.append(Spacer(1, 6))
 
     if parcel_table:
-        story.append(
-            Paragraph("<b>Geometrický návrh rozdělení pozemku:</b>", t_s)
-        )
-        p_rows = [[
-            Paragraph("<b>Označení</b>", b_s),
-            Paragraph("<b>Druh plochy</b>", b_s),
-            Paragraph("<b>Výměra</b>", b_s),
-            Paragraph("<b>Dopravní napojení</b>", b_s)
-        ]]
+        story.append(Paragraph("<b>Geometrický návrh rozdělení pozemku:</b>", t_s))
+        p_rows = [[Paragraph("<b>Označení</b>", b_s), Paragraph("<b>Druh plochy</b>", b_s), Paragraph("<b>Výměra</b>", b_s), Paragraph("<b>Dopravní napojení</b>", b_s)]]
         for row in parcel_table:
-            p_rows.append([
-                Paragraph(row["Označení parcely"], b_s),
-                Paragraph(row["Účel využití"], b_s),
-                Paragraph(row["Výměra"], b_s),
-                Paragraph(row["Přístup"], b_s)
-            ])
+            p_rows.append([Paragraph(row["Označení parcely"], b_s), Paragraph(row["Účel využití"], b_s), Paragraph(row["Výměra"], b_s), Paragraph(row["Přístup"], b_s)])
         tp_tab = Table(p_rows, colWidths=[3.5*cm, 5.0*cm, 3.5*cm, 6.0*cm])
-        tp_tab.setStyle(TableStyle([
-            ('BACKGROUND', (0,0), (-1,0), c_blue),
-            ('TEXTCOLOR', (0,0), (-1,0), colors.white),
-            ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-            ('PADDING', (0,0), (-1,-1), 3)
-        ]))
+        tp_tab.setStyle(TableStyle([('BACKGROUND', (0,0), (-1,0), c_blue), ('TEXTCOLOR', (0,0), (-1,0), colors.white), ('GRID', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 3)]))
         story.append(tp_tab)
         story.append(Spacer(1, 6))
 
-    story.append(
-        Paragraph("<b>Semafor developerských rizik:</b>", t_s)
-    )
+    story.append(Paragraph("<b>Semafor developerských rizik:</b>", t_s))
     for item in evals:
-        bg = '#FFEBEE' if item['stat'] == 'DANGER' else (
-            '#FFF3E0' if item['stat'] == 'WARNING' else '#E8F5E9'
-        )
-        badge = bd if item['stat'] == 'DANGER' else (
-            bw if item['stat'] == 'WARNING' else bp
-        )
-        st_label = "STOPKA" if item['stat'] == 'DANGER' else (
-            "POZOR" if item['stat'] == 'WARNING' else "OK"
-        )
-        
-        p_col1 = Paragraph(f"<b>[{item['cat']}] {item['title']}</b>", b_s)
-        p_col2 = Paragraph(st_label, badge)
-        p_detail = Paragraph(item['detail'], b_s)
-        
+        bg = '#FFEBEE' if item['stat'] == 'DANGER' else ('#FFF3E0' if item['stat'] == 'WARNING' else '#E8F5E9')
+        badge = bd if item['stat'] == 'DANGER' else (bw if item['stat'] == 'WARNING' else bp)
+        st_label = "STOPKA" if item['stat'] == 'DANGER' else ("POZOR" if item['stat'] == 'WARNING' else "OK")
         row = [
-            [p_col1, p_col2],
-            [p_detail, ""]
+            [Paragraph(f"<b>[{item['cat']}] {item['title']}</b>", b_s), Paragraph(st_label, badge)],
+            [Paragraph(item['detail'], b_s), ""]
         ]
         tr = Table(row, colWidths=[14.5*cm, 3.5*cm])
-        tr.setStyle(TableStyle([
-            ('SPAN', (0,1), (1,1)),
-            ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(bg)),
-            ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')),
-            ('PADDING', (0,0), (-1,-1), 3)
-        ]))
+        tr.setStyle(TableStyle([('SPAN', (0,1), (1,1)), ('BACKGROUND', (0,0), (-1,-1), colors.HexColor(bg)), ('BOX', (0,0), (-1,-1), 0.5, colors.HexColor('#CBD5E1')), ('PADDING', (0,0), (-1,-1), 3)]))
         story.append(tr)
         story.append(Spacer(1, 2))
 
     doc.build(story)
     return out_pdf
 
-# ==================== STREAMLIT ROZHRANÍ ====================
-st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️", layout="wide")
-
+st.set_page_config(page_title="ParcelCheck AI", page_icon="🏗️️", layout="wide")
 st.title("🏗️ ParcelCheck AI — Due Diligence & Developerský audit")
-st.caption("Automatická detekce katastru, územního plánu, cenové mapy a parcelace")
+st.caption("Automatická detekce katastru, územního plánu, cenové mapy a situace parcelace")
 
 with st.sidebar:
     st.header("⚙️ Ověření pozemku")
@@ -425,10 +447,7 @@ if uploaded_file is not None:
         "nets_verified": nets_ok
     }
 
-    t1, t2 = st.tabs([
-        "📋 1. Právní & Územní Audit",
-        "📐 2. Katastrální mapa & Geometrická parcelace"
-    ])
+    t1, t2 = st.tabs(["📋 1. Právní & Územní Audit", "📐 2. Katastrální mapa & Geometrická parcelace"])
 
     with t1:
         if auto_up["is_commercial"]:
@@ -463,75 +482,19 @@ if uploaded_file is not None:
 
     with t2:
         st.subheader("🗺️ Reálná katastrální situace & Geometrický návrh dělení")
-        
-        parc_enc = str(d['parcel_no']).replace('/', '%2F')
-        area_enc = str(d['cadastral_area']).strip().replace(' ', '+')
-        url_mapy = "https://mapy.cz/zakladni?q=" + parc_enc + "%2C+" + area_enc + "&z=18"
-        url_cuzk = "https://nahlizenidokn.cuzk.cz/"
-
-        st.markdown(f"""
-        <div style="background:#1E293B; border-radius:8px; padding:14px; margin-bottom:15px; border:1px solid #334155;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-                <span style="color:#38BDF8; font-weight:bold; font-size:15px;">
-                    📍 Parcela č. {d['parcel_no']} — k.ú. {d['cadastral_area']} (obec {d['municipality']})
-                </span>
-                <div style="display:flex; gap:10px;">
-                    <a href="{url_mapy}" target="_blank" style="background:#0284C7; color:white; padding:6px 12px; border-radius:5px; text-decoration:none; font-size:12px; font-weight:bold;">
-                        Otevřít na Mapy.cz ↗
-                    </a>
-                    <a href="{url_cuzk}" target="_blank" style="background:#0F766E; color:white; padding:6px 12px; border-radius:5px; text-decoration:none; font-size:12px; font-weight:bold;">
-                        Nahlížení ČÚZK ↗
-                    </a>
-                </div>
-            </div>
-            <iframe 
-                width="100%" 
-                height="420" 
-                frameborder="0" 
-                scrolling="no" 
-                marginheight="0" 
-                marginwidth="0" 
-                src="https://www.openstreetmap.org/export/embed.html?layer=mapnik" 
-                style="border:none; border-radius:6px;">
-            </iframe>
-            <div style="color:#94A3B8; font-size:12px; margin-top:8px;">
-                💡 <b>Tip:</b> Pro přesné katastrální hranice a čísla parcel klikněte na <b>Otevřít na Mapy.cz</b>.
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
 
         pc1, pc2 = st.columns(2)
         with pc1:
-            target_plot = st.number_input(
-                "Cílová výměra 1 parcely (m²)",
-                min_value=400, max_value=2500, value=800, step=50
-            )
-            road_sel = st.selectbox(
-                "Typ uličního profilu",
-                ["Standardní (8,0 m s chodníkem)", "Úsporná (6,5 m)"]
-            )
+            target_plot = st.number_input("Cílová výměra 1 parcely (m²)", min_value=400, max_value=2500, value=800, step=50)
+            road_sel = st.selectbox("Typ uličního profilu", ["Standardní (8,0 m s chodníkem)", "Úsporná (6,5 m)"])
             has_turn = st.checkbox("Slepá ulice delší než 50 m (obratiště IZS)", value=True)
-            has_contract = st.checkbox(
-                "Vyžadována plánovací smlouva s obcí (Z8 / rozvoj)",
-                value=auto_up.get("requires_contract", False)
-            )
-            contrib = st.number_input(
-                "Příspěvek obci na 1 parcelu (Kč)",
-                min_value=0, max_value=500000,
-                value=150000 if has_contract else 0,
-                step=25000
-            ) if has_contract else 0
+            has_contract = st.checkbox("Vyžadována plánovací smlouva s obcí (Z8 / rozvoj)", value=auto_up.get("requires_contract", False))
+            contrib = st.number_input("Příspěvek obci na 1 parcelu (Kč)", min_value=0, max_value=500000, value=150000 if has_contract else 0, step=25000) if has_contract else 0
 
         with pc2:
-            buy_p = st.number_input(
-                "Nákup surového pozemku (Kč/m²)",
-                value=int(bench_p['raw_avg']), step=100
-            )
+            buy_p = st.number_input("Nákup surového pozemku (Kč/m²)", value=int(bench_p['raw_avg']), step=100)
             def_s = bench_p['comm_avg'] if auto_up['is_commercial'] else bench_p['serviced_avg']
-            sell_p = st.number_input(
-                "Prodej zasíťované parcely (Kč/m²)",
-                value=int(def_s), step=200
-            )
+            sell_p = st.number_input("Prodej zasíťované parcely (Kč/m²)", value=int(def_s), step=200)
 
         r_w = 8.0 if "8,0" in road_sel else 6.5
         turn_m2 = 130.0 if has_turn else 0.0
@@ -540,6 +503,21 @@ if uploaded_file is not None:
         net_m2 = max(0.0, area_total - r_m2)
         n_plots = int(net_m2 // target_plot)
         avg_plot = (net_m2 / n_plots) if n_plots > 0 else 0.0
+
+        # Vložení interaktivní mapy se skutečným satelitem, ČÚZK a rozparcelováním
+        map_html = render_interactive_parcelation_map(
+            d["cadastral_area"], d["parcel_no"], area_total, n_plots, r_w, has_turn
+        )
+        components.html(map_html, height=480)
+
+        st.caption("📍 Letecký snímek + oficiální katastrální hranice ČÚZK + geometrický návrh nových parcel s přístupovou komunikací.")
+
+        st.divider()
+        b1, b2, b3, b4 = st.columns(4)
+        b1.metric("Celková výměra", f"{area_total:.0f} m²")
+        b2.metric("Zábor komunikace", f"{r_m2:.0f} m²", f"{(r_m2/area_total*100):.1f} %")
+        b3.metric("Čistá stavební plocha", f"{net_m2:.0f} m²")
+        b4.metric("Počet stavebních parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
 
         st.divider()
         st.markdown("#### 📐 Geometrický rozpad parcelace (Návrh geometrického plánu)")
@@ -563,13 +541,6 @@ if uploaded_file is not None:
             })
             
         st.table(parcel_rows)
-
-        st.divider()
-        b1, b2, b3, b4 = st.columns(4)
-        b1.metric("Celková výměra", f"{area_total:.0f} m²")
-        b2.metric("Zábor komunikace", f"{r_m2:.0f} m²", f"{(r_m2/area_total*100):.1f} %")
-        b3.metric("Čistá stavební plocha", f"{net_m2:.0f} m²")
-        b4.metric("Počet stavebních parcel", f"{n_plots} ks", f"prům. {avg_plot:.0f} m²")
 
         st.divider()
         st.markdown("#### 🛠️ Položkový rozpočet infrastruktury")
