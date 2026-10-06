@@ -166,3 +166,55 @@ class ParcelCheckAnalyzer:
                 "detail": "Nutno v kupní smlouvě podmínit výplatu kupní ceny kvitancí věřitele a výmazem zástavy."
             })
         elif p["limitations"]:
+            checks.append({
+                "category": "Právní stav",
+                "status": "PASS",
+                "title": "V části C nejsou evidována žádná omezení vlastnického práva",
+                "detail": "Pozemek je bez zapsaných zástav, exekucí či věcných břemen."
+            })
+
+        if "zemědělský" in p["protection"].lower() or p["land_type"] in ["trvalý travní porost", "orná půda", "zahrada"]:
+            bpej_str = p['bpej'] if p['bpej'] else "Dle bonity"
+            checks.append({
+                "category": "Zemědělský půdní fond (ZPF)",
+                "status": "INFO",
+                "title": f"Druh: {p['land_type']} — nutné odnětí ze ZPF (BPEJ: {bpej_str})",
+                "detail": f"Celá plocha {area:.0f} m² je v ZPF. Pro stavbu je nutné vyjmout zastavěnou a zpevněnou plochu (cca {max_footprint:.0f} m²)."
+            })
+
+        nets_verified = up_params.get("nets_verified", False)
+        if not nets_verified:
+            checks.append({
+                "category": "Inženýrské sítě (DTM)",
+                "status": "WARNING",
+                "title": "Inženýrské sítě nejsou na pozemku ověřeny (nejsou součástí KN)",
+                "detail": "Katastr nemovitostí sítě neeviduje. Na pozemku není garantováno žádné napojení na vodu, kanalizaci ani elektro. RIZIKO: Nutno podat žádost o vyjádření k existenci sítí a prověřit kapacitu přípojek a náklady na zasíťování."
+            })
+        else:
+            checks.append({
+                "category": "Inženýrské sítě (DTM)",
+                "status": "PASS",
+                "title": "Sítě a dopravní napojení uživatelsky potvrzeny",
+                "detail": f"Dopravní napojení: {up_params.get('road', 'Sjezd z přilehlé komunikace')}\nSítě: {up_params.get('infrastructure', 'Dle technické dokumentace')}."
+            })
+
+        return checks
+
+def generate_pdf_report(analyzer, output_pdf, up_params=None):
+    data = analyzer.data
+    evals = analyzer.evaluate_developer_rules(up_params)
+
+    doc = SimpleDocTemplate(
+        output_pdf,
+        pagesize=A4,
+        rightMargin=1.5*cm, leftMargin=1.5*cm, topMargin=1.5*cm, bottomMargin=1.5*cm
+    )
+
+    styles = getSampleStyleSheet()
+
+    title_style = ParagraphStyle('DocTitle', parent=styles['Heading1'], fontName=FONT_BOLD, fontSize=15, leading=19, textColor=colors.HexColor('#1F4E79'), spaceAfter=3)
+    subtitle_style = ParagraphStyle('DocSubtitle', parent=styles['Normal'], fontName=FONT_OBLIQUE, fontSize=9, leading=13, textColor=colors.HexColor('#555555'), spaceAfter=10)
+    h2_style = ParagraphStyle('H2', parent=styles['Heading2'], fontName=FONT_BOLD, fontSize=11, leading=15, textColor=colors.HexColor('#1F4E79'), spaceBefore=8, spaceAfter=5)
+    body_style = ParagraphStyle('Body', parent=styles['Normal'], fontName=FONT_MAIN, fontSize=8.5, leading=12, textColor=colors.HexColor('#222222'))
+
+    badge_pass = ParagraphStyle('Pass', fontName=FONT_BOLD, fontSize=7.5, textColor=colors.HexColor('#1B5
